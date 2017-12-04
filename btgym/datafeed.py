@@ -205,6 +205,8 @@ class BTgymDataset:
         self.read_csv(data_filename)
         self.is_ready = True
 
+
+    #READ HERE !!!!!!!
     def read_csv(self, data_filename=None):
         """
         Populates instance by loading data: CSV file --> pandas dataframe.
@@ -216,6 +218,8 @@ class BTgymDataset:
             self.filename = data_filename  # override data source if one is given
         if type(self.filename) == str:
             self.filename = [self.filename]
+
+        print("start reading")
 
         dataframes = []
         for filename in self.filename:

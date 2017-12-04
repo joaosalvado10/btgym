@@ -3,7 +3,7 @@ import backtrader as bt
 
 from btgym import BTgymEnv, BTgymDataset
 from btgym.strategy.observers import Reward, Position, NormPnL
-from btgym.algorithms import Launcher, A3C
+from btgym.algorithms import Launcher, PPO, Unreal
 
 from btgym.research import DevStrat_4_6
 
@@ -16,14 +16,14 @@ MyCerebro = bt.Cerebro()
 
 MyCerebro.addstrategy(
     DevStrat_4_6,
-    drawdown_call=5, # max % to loose, in percent of initial cash
-    target_call=10,  # max % to win, same
+    drawdown_call=80, # max % to loose, in percent of initial cash
+    target_call=100,  # max % to win, same
     skip_frame=10,
 )
 # Set leveraged account:
 MyCerebro.broker.setcash(2000)
 MyCerebro.broker.setcommission(commission=0.0001, leverage=10.0) # commisssion to imitate spread
-MyCerebro.addsizer(bt.sizers.SizerFix, stake=5000,)
+MyCerebro.addsizer(bt.sizers.SizerFix, stake=2000,)
 
 #MyCerebro.addanalyzer(bt.analyzers.DrawDown)
 
@@ -33,9 +33,10 @@ MyCerebro.addobserver(Position)
 MyCerebro.addobserver(NormPnL)
 
 MyDataset = BTgymDataset(
-    #filename='.data/DAT_ASCII_EURUSD_M1_201703.csv',
-    #filename='./data/DAT_ASCII_EURUSD_M1_201704.csv',
-    filename='./data/test_sine_1min_period256_delta0002.csv',
+    #filename='.data/DAT_ASCII_EURUSD_M1_2010.csv',
+    #filename='./data/DAT_ASCII_EURUSD_M1_201704.csv', #USE TO TEST
+    filename='./data/DAT_ASCII_EURUSD_M1_2015.csv', #USE TO TRAIN
+
     start_weekdays={0, 1, 2, 3},
     episode_duration={'days': 0, 'hours': 23, 'minutes': 55},
     start_00=False,
@@ -54,8 +55,8 @@ env_config = dict(
         render_size_human=(9, 4),
         render_size_state=(11, 3),
         render_dpi=75,
-        port=5000,
-        data_port=4999,
+        port=6000,
+        data_port=6999,
         connect_timeout=60,
         verbose=0,  # better be 0
     )
@@ -63,11 +64,11 @@ env_config = dict(
 
 cluster_config = dict(
     host='127.0.0.1',
-    port=12230,
-    num_workers=6,  # Set according CPU's available
+    port=12236,
+    num_workers= 3,  # Set according CPU's available
     num_ps=1,
     num_envs=1,  # do not change yet
-    log_dir=os.path.expanduser('~/tmp/test_gym_a3c'),
+    log_dir=os.path.expanduser('~/tmp/FINAL_UNREAL'),
 )
 
 policy_config = dict(
@@ -76,20 +77,28 @@ policy_config = dict(
 )
 
 trainer_config = dict(
-    class_ref=A3C,
+    class_ref=Unreal,
     kwargs=dict(
-        opt_learn_rate=[1e-4, 1e-4], # or random log-uniform range, values > 2e-4 can ruin training
+        opt_learn_rate=1e-4, # or random log-uniform range, values > 2e-4 can ruin training
         opt_end_learn_rate=1e-5,
         opt_decay_steps=100*10**6,
-        model_gae_lambda=0.95,
+        model_gamma=0.95,
+        model_gae_lambda=1.0,
         model_beta=[0.05, 0.01], # Entropy reg, random log-uniform
         rollout_length=20,
         time_flat=False,
+        use_value_replay=True,
+        use_pixel_control=True,
+        use_reward_prediction=False,
+        rp_reward_threshold=0.3,
+        rp_sequence_size=4,
+        rp_lambda=0.01,
         model_summary_freq=100,
         episode_summary_freq=5,
         env_render_freq=20,
     )
 )
+
 
 launcher = Launcher(
     cluster_config=cluster_config,
@@ -99,7 +108,7 @@ launcher = Launcher(
     test_mode=False,
     max_env_steps=100*10**6,
     root_random_seed=0,
-    purge_previous=1,  # ask to override previously saved model and logs
+    purge_previous=0,  # ask to override previously saved model and logs
     verbose=0  # 0 or 1
 )
 

@@ -126,6 +126,9 @@ class BTgymEnv(gym.Env):
             If any <other> kwarg is given:
                 override corresponding default parameter.
         """
+
+        #print("start backtrader")
+
         # Parameters and default values:
         self.params = dict(
 

@@ -46,6 +46,7 @@ class BaseAacPolicy(object):
             aux_estimate:       (bool), if True - add auxiliary tasks estimations to self.callbacks dictionary.
             **kwargs            not used
         """
+
         self.ob_space = ob_space
         self.ac_space = ac_space
         self.rp_sequence_size = rp_sequence_size

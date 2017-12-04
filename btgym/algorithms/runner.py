@@ -67,6 +67,7 @@ class RunnerThread(threading.Thread):
     def start_runner(self, sess, summary_writer):
         self.sess = sess
         self.summary_writer = summary_writer
+        print("Start runner")
         self.start()
 
     def run(self):
@@ -75,6 +76,7 @@ class RunnerThread(threading.Thread):
             self._run()
 
     def _run(self):
+        print("runner running")
         rollout_provider = env_runner(
             self.sess,
             self.env,

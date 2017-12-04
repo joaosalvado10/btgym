@@ -150,6 +150,8 @@ class BaseAAC(object):
                     because one can safely shuffle training batch or mix on-policy and off-policy data in single mini-batch,
                     ensuring iid property and allowing, say, proper batch normalisation (this has yet to be tested).
         """
+
+        print("Start aac based unreal")
         self.log = log
         self.random_seed = random_seed
         if self.random_seed is not None:
@@ -506,6 +508,8 @@ class BaseAAC(object):
                 )
             else:
                 memory_config = None
+
+            #HERE EACH
 
             # Make runners:
             # `rollout_length` represents the number of "local steps":  the number of timesteps

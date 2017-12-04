@@ -327,7 +327,7 @@ class Launcher():
             worker = Worker(**worker_config)
             # Launch:
             worker.daemon = False
-            worker.start()
+            worker.start() #this one calls the runs on worker later on??
 
             if worker.job_name in 'worker':
                 # Allow data-master to launch datafeed_server:
@@ -350,6 +350,8 @@ class Launcher():
         print(msg)
         self.log.info(msg)
         signal.pause()
+
+        #Processes already runing in parallel, impossible
 
         # Wait every worker to finish:
         for worker in workers_list:

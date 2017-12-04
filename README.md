@@ -42,22 +42,28 @@ I have no idea what kind of algorithm and setup will solve it [if any]. Explore 
    
 ****
 ### <a name="install"></a>[Installation](#contents)
-- Btgym requires:  `gym[atari]`, `tensorflow`, `opencv-python`,
-                   `backtrader`, `pandas`, `numpy`, `scipy`, `pyzmq`,
-                   `matplotlib`,`pillow`, `ipython`, `psutil`.
-- Clone or copy btgym repository to local disk, cd to it and run: `pip install -e . `
-to install package and all dependencies:
-``` 
-git clone https://github.com/Kismuz/btgym.git
-cd btgym
-pip install -e .
-```
-- To update to latest version:
-```
-cd btgym
-git pull
-pip install --upgrade -e .
-```
+It is highly recommended to run BTGym in designated virtual environment.
+
+Clone or copy btgym repository to local disk, cd to it and run: `pip install -e .` to install package and all dependencies:
+
+    git clone https://github.com/Kismuz/btgym.git
+
+    cd btgym
+
+    pip install -e .
+
+To update to latest version::
+
+    cd btgym
+
+    git pull
+
+    pip install --upgrade -e .
+
+##### Note:
+BTGym requres Matplotlib version 2.0.2, downgrade your installation if you have version 2.1:
+
+    pip install matplotlib==2.0.2
 
 ****
 ### <a name="start"></a>[Quickstart](#contents)
@@ -71,75 +77,19 @@ MyEnvironment = BTgymEnv(filename='../examples/data/DAT_ASCII_EURUSD_M1_2016.csv
 Adding more controls may look like:
 ```python
 from btgym import BTgymEnv
- 
+
 MyEnvironment = BTgymEnv(filename='../examples/data/DAT_ASCII_EURUSD_M1_2016.csv',
-                         episode_len_days=2,
-                         episode_len_hours=23,
-                         episode_len_minutes=55,
+                         episode_duration={'days': 2, 'hours': 23, 'minutes': 55},
                          drawdown_call=50,
                          state_shape=(4,20),
                          port=5555,
                          verbose=1,
                          )
-                 
-```
-Same one but registering environment in Gym preferred way:
-```python
-import gym
-from btgym import BTgymEnv
-  
-env_params = dict(filename='../examples/data/DAT_ASCII_EURUSD_M1_2016.csv',
-                  episode_len_days=2,
-                  episode_len_hours=23,
-                  episode_len_minutes=55,
-                  drawdown_call=50,
-                  state_shape=(20,4),
-                  port=5555,
-                  verbose=1,
-                  )
-                  
-gym.envs.register(id='backtrader-v5555', entry_point='btgym:BTgymEnv', kwargs=env_params,)
-                  
-MyEnvironment = gym.make('backtrader-v5555')
 ```
 
-Maximum environment flexibility is achieved by explicitly defining and passing `Dataset` and `Cerebro` instances:
-```python
-from gym import spaces
-import backtrader as bt
-from btgym import BTgymDataset, BTgymStrategy, BTgymEnv
- 
-MyCerebro = bt.Cerebro()
-MyCerebro.addstrategy(BTgymStrategy,
-                      state_shape={'raw_state': spaces.Box(low=0,high=1,shape=(20,4))},
-                      skip_frame=5,
-                      state_low=None,
-                      state_high=None,
-                      drawdown_call=50,
-                      )
- 
-MyCerebro.broker.setcash(100.0)
-MyCerebro.broker.setcommission(commission=0.001)
-MyCerebro.addsizer(bt.sizers.SizerFix, stake=10)
-MyCerebro.addanalyzer(bt.analyzers.DrawDown)
- 
-MyDataset = BTgymDataset(filename='../examples/data/DAT_ASCII_EURUSD_M1_2016.csv',
-                         start_weekdays=[0, 1, 2, 4], 
-                         start_00=True, 
-                         episode_len_days=0, 
-                         episode_len_hours=23,
-                         episode_len_minutes=55,
-                         time_gap_days=0,
-                         time_gap_hours=5,
-                         )
- 
-MyEnvironment = BTgymEnv(dataset=MyDataset,
-                         engine=MyCerebro,
-                         port=5555,
-                         verbose=1,
-                         )
-```
-###### See how-to's in [`examples`](./examples) directory.
+##### See more options at [Documentation: Quickstart >>](https://kismuz.github.io/btgym/intro.html#quickstart)
+
+##### and how-to's in [Examples directory >>](./examples).
 ****
 ### <a name="description"></a> [General description](#contents)
 #### <a name="problem"></a> Problem setting
@@ -227,22 +177,21 @@ Consider a discrete-time finite-horizon partially observable Markov decision pro
 ****
    
     
-### <a name="reference"></a> [DOCs and API Reference](https://kismuz.github.io/btgym/)
+### <a name="reference"></a> [Documentation and API Reference >>](https://kismuz.github.io/btgym/)
 
 ****
 ### <a name="issues"></a> [Current issues and limitations:](#title)
-
+- requres Matplotlib version 2.0.2;
 - matplotlib backend warning: appears when importing pyplot and using `%matplotlib inline` magic
   before btgym import. It's recommended to import btacktrader and btgym first to ensure proper backend
-  choice.
+  choice;
 - not tested with Python < 3.5;
-- doesn't seem to work under Windows;
+- doesn't seem to work correctly under Windows;
 - by default, is configured to accept Forex 1 min. data from www.HistData.com;
 - only random data sampling is implemented;
 - no built-in dataset splitting to training/cv/testing subsets;
 - only one equity/currency pair can be traded;
 - ~~no 'skip-frames' implementation within environment;~~ done
-- env.get_stat() method is returning strategy analyzers results only. No observers yet.
 - ~~no plotting features, except if using pycharm integration observer.~~
     ~~Not sure if it is suited for intraday strategies.~~ [partially] done
 - ~~making new environment kills all processes using specified network port. Watch out your jupyter kernels.~~ fixed 
@@ -251,9 +200,9 @@ Consider a discrete-time finite-horizon partially observable Markov decision pro
 ### <a name="roadmap"></a> [TODO's and Road Map:](#title)
  - [x] refine logic for parameters applying priority (engine vs strategy vs kwargs vs defaults);
  - [X] API reference;
- - [ ] examples;
+ - [x] examples;
  - [x] frame-skipping feature;
- - [ ] dataset tr/cv/t splitting feature;
+ - [ ] dataset tr/cv/t approach IN PROGRESS;
  - [x] state rendering;
  - [ ] retrieving results for observers;
  - [x] proper rendering for entire episode;
@@ -264,6 +213,8 @@ Consider a discrete-time finite-horizon partially observable Markov decision pro
  - [x] A3C implementation for BTgym;
  - [x] UNREAL implementation for BTgym;
  - [x] PPO implementation for BTgym;
+ - [ ] RL^2 / MAML / DARLA adaptations;
+ - [ ] learning from demonstrations;
  - [ ] risk-sensitive agents implementation;
  - [ ] sequential and sliding time-window sampling IN PROGRESS;
  - [ ] multiply instruments trading;
