@@ -35,12 +35,13 @@ MyCerebro.addobserver(NormPnL)
 MyDataset = BTgymDataset(
     #filename='.data/DAT_ASCII_EURUSD_M1_2010.csv',
     #filename='./data/DAT_ASCII_EURUSD_M1_201704.csv', #USE TO TEST
-    filename='./data/DAT_ASCII_EURUSD_M1_2015.csv', #USE TO TRAIN
+    filename='./data/Train_EurUsd.csv', #USE TO TRAIN
 
     start_weekdays={0, 1, 2, 3},
-    episode_duration={'days': 0, 'hours': 23, 'minutes': 55},
+    episode_duration={'days': 120, 'hours': 0, 'minutes': 0},
     start_00=False,
-    time_gap={'hours': 6},
+    #time_gap={'hours': 6},
+    time_gap={'days': 150}
 )
 
 env_config = dict(

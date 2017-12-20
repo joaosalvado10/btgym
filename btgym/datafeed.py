@@ -60,10 +60,15 @@ class BTgymDataset:
         # data files from www.HistData.com:
 
         # CSV to Pandas params.
-        sep=';',
-        header=0,
+        #sep=';',
+        sep=',',
+        #header=0,
         index_col=0,
         parse_dates=True,
+
+        #DT_DATE	NU_LOW	NU_HIGH	NU_CLOSE	NU_PX_OPEN	volume
+
+
         names=['open', 'high', 'low', 'close', 'volume'],
 
         # Pandas to BT.feeds params:
@@ -191,6 +196,8 @@ class BTgymDataset:
         # Maximum possible number of data records (rows) within episode:
         self.episode_num_records = int(self.max_episode_len.total_seconds() / (60 * self.timeframe))
 
+        self.episode_num_records = int(self.max_episode_len.days)
+
     def reset(self, data_filename=None, **kwargs):
         """
         Gets instance ready.
@@ -228,11 +235,12 @@ class BTgymDataset:
                 current_dataframe = pd.read_csv(
                     filename,
                     sep=self.sep,
-                    header=self.header,
+                    #header=self.header,
                     index_col=self.index_col,
                     parse_dates=self.parse_dates,
                     names=self.names
                 )
+
 
                 # Check and remove duplicate datetime indexes:
                 duplicates = current_dataframe.index.duplicated(keep='first')
@@ -257,7 +265,14 @@ class BTgymDataset:
                     raise FileNotFoundError(msg)
 
         self.data = pd.concat(dataframes)
+
+
+        #print(self.data)
+
+
         range = pd.to_datetime(self.data.index)
+
+
         self.data_range_delta = (range[-1] - range[0]).to_pytimedelta()
 
     def describe(self):
