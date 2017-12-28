@@ -105,7 +105,7 @@ class Worker(multiprocessing.Process):
     def run(self):
         """Worker runtime body.
         """
-        print("Start running worker ")
+        #print("Start running worker ")
         tf.reset_default_graph()
 
         if self.test_mode:
@@ -165,6 +165,10 @@ class Worker(multiprocessing.Process):
 
             self.log.debug('worker_{}:envronment ok.'.format(self.task))
 
+
+
+
+
             # Define trainer:
             trainer = self.trainer_class(
                 env=self.env_list,
@@ -198,6 +202,9 @@ class Worker(multiprocessing.Process):
 
             summary_writer = tf.summary.FileWriter(summary_dir)
 
+            #print("before create supervisor")
+
+
             sv = tf.train.Supervisor(
                 is_chief=(self.task == 0),
                 logdir=logdir,
@@ -211,10 +218,18 @@ class Worker(multiprocessing.Process):
             )
             self.log.debug("worker_{}: connecting to the parameter server... ".format(self.task))
 
-            with sv.managed_session(server.target, config=config) as sess, sess.as_default():
+
+            #print("after creating supervisor")
+
+            with sv.managed_session(server.target, config=config) as sess, sess.as_default(): #stops here
+
+
                 sess.run(trainer.sync)
                 #Starting runners!!!!!!!!!!!!! LOOP
                 trainer.start(sess, summary_writer)
+                print("RUNNERS STARTED")
+
+
                 # Note: `self.global_step` refers to number of environment steps
                 # summarized over all environment instances, not to number of policy optimizer train steps.
                 global_step = sess.run(trainer.global_step)
@@ -224,6 +239,9 @@ class Worker(multiprocessing.Process):
                         trainer.memory.fill()
 
                 self.log.warning("worker_{}: started training at step: {}".format(self.task, global_step))
+
+
+                #!!!!!!!!!!!!!!!!!!!!!!!!
 
                 #training step lop
                 while not sv.should_stop() and global_step < self.max_env_steps:

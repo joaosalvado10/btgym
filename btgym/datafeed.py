@@ -28,6 +28,7 @@ import backtrader.feeds as btfeeds
 import pandas as pd
 
 
+
 class BTgymDataset:
     """
     Base Backtrader.feeds data provider class.
@@ -66,10 +67,15 @@ class BTgymDataset:
         index_col=0,
         parse_dates=True,
 
-        #DT_DATE	NU_LOW	NU_HIGH	NU_CLOSE	NU_PX_OPEN	volume
+        #OPEN,HIGH,LOW,CLOSE,intrates10Us,intrates2Us,intrates2EU,intrates10EU,
+        # spx,oil,10YR_US_MINUS_EU,2YR_US_MINUS_EU
 
 
-        names=['open', 'high', 'low', 'close', 'volume'],
+        names=['open', 'high', 'low', 'close', 'ir10us','ir2us','ir2eu',
+               'ir10eu','spx','oil','yield_10','yield_2'],
+
+        #mine old
+        #names=['low', 'high',  'close','open', 'volume'],
 
         # Pandas to BT.feeds params:
         timeframe=1,  # 1 minute.
@@ -78,8 +84,17 @@ class BTgymDataset:
         high=2,
         low=3,
         close=4,
+        ir10us=5,
+        ir2us=6,
+        ir2eu=7,
+        ir10eu=8,
+        spx=9,
+        oil=10,
+        yield_10=11,
+        yield_2=12,
+
         volume=-1,
-        openinterest=-1,
+        #openinterest=-1,
 
         # Random-sampling params:
         start_weekdays=[0, 1, 2, 3, ],  # Only weekdays from the list will be used for episode start.
@@ -320,6 +335,7 @@ class BTgymDataset:
         """
         try:
             assert not self.data.empty
+
             btfeed = btfeeds.PandasDirectData(
                 dataname=self.data,
                 timeframe=self.timeframe,
@@ -329,8 +345,11 @@ class BTgymDataset:
                 low=self.low,
                 close=self.close,
                 volume=self.volume,
-                openinterest=self.openinterest
+                #openinterest=self.openinterest
             )
+
+
+
             btfeed.numrecords = self.data.shape[0]
             return btfeed
 
@@ -848,3 +867,58 @@ class BTgymRandomTrial(BTgymSequentialTrial):
         self.log.debug('Trial sample #{}'.format(self.sample_num))
 
         return self._sample_position(position=self.trial_mean_row, tolerance=int(self.trial_range_row / 2))
+
+
+class ExtraPandasDirectData(btfeeds.PandasDirectData):
+    lines = ('ir10us', 'ir2us','yield_10','spx')
+    params= (
+        ('ir10us',6),
+        ('ir2us',7),
+        ('yield_10', 8),
+        ('spx', 9),
+    )
+
+    datafields= btfeeds.PandasData.datafields + (['ir10us', 'ir2us','yield_10','spx'])
+
+    #'ir10us', 'ir2us', 'ir2eu', 'ir10eu', 'spx', 'oil', 'yield_10', 'yield_2')
+
+
+class ExtraLinesDataset(BTgymDataset):
+    def to_btfeed(self):
+        """
+        Performs BTgymDataset-->bt.feed conversion.
+
+        Returns:
+             bt.datafeed instance.
+        """
+        try:
+            assert not self.data.empty
+
+            btfeed = ExtraPandasDirectData(
+                dataname=self.data,
+                timeframe=self.timeframe,
+                datetime=self.datetime,
+                open=self.open,
+                high=self.high,
+                low=self.low,
+                close=self.close,
+                volume=self.volume,
+                ir10us=6,
+                ir2us=7,
+                yield_10=8,
+                #ir2eu=8,
+                #ir10eu=9,
+                spx=9,
+                #oil=11,
+
+                #yield_2=13
+
+            )
+
+            btfeed.numrecords = self.data.shape[0]
+            return btfeed
+
+        except (AssertionError, AttributeError) as e:
+            msg = 'BTgymDataset instance holds no data. Hint: forgot to call .read_csv()?'
+            self.log.error(msg)
+            raise AssertionError(msg)

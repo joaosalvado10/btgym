@@ -129,6 +129,7 @@ def env_runner(sess,
     Yelds:
         collected data as dictionary of on_policy, off_policy rollouts and episode statistics.
     """
+
     if memory_config is not None:
         memory = memory_config['class_ref'](**memory_config['kwargs'])
         """
@@ -141,6 +142,7 @@ def env_runner(sess,
         """
     else:
         memory = _DummyMemory()
+
 
     last_state = env.reset()
     last_context = policy.get_initial_features()

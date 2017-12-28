@@ -527,6 +527,7 @@ class BTgymEnv(gym.Env):
         """
         Implementation of OpenAI Gym env.reset method. Starts new episode.
         """
+
         # Data Server check:
         if self.data_master:
             if not self.data_server or not self.data_server.is_alive():
@@ -607,6 +608,7 @@ class BTgymEnv(gym.Env):
                 self._stop_server()
                 raise AssertionError(msg)
 
+
             if state_only:
                 return self.env_response[0]
             else:
@@ -656,6 +658,8 @@ class BTgymEnv(gym.Env):
             raise ConnectionError(msg)
 
         self.env_response = env_response ['message']
+
+        #print("STEP PERFORMED!!!!")
 
         return self.env_response
 

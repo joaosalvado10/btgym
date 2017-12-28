@@ -32,11 +32,13 @@ class DevStrat_4_6(BTgymBaseStrategy):
         synthetic/real
     """
     time_dim = 30  # NOTE: changed this --> change Policy  UNREAL for aux. pix control task upsampling params
+
+
     params = dict(
         # Note fake `Width` dimension to use 2d conv etc.:
         state_shape=
             {
-                'external': spaces.Box(low=-1, high=1, shape=(time_dim, 1, 3)),
+                'external': spaces.Box(low=-100, high=100, shape=(time_dim, 1, 4)),
                 'internal': spaces.Box(low=-2, high=2, shape=(time_dim, 1, 5)),
                 'metadata': DictSpace(
                     {
@@ -71,9 +73,17 @@ class DevStrat_4_6(BTgymBaseStrategy):
         Args:
             **kwargs:   see BTgymBaseStrategy args.
         """
+
+        #print("CREATE NEW STRATEGY !!!!!")
+
         #super(DevStrat001, self)._set_params(self.params)
 
         super(DevStrat_4_6, self).__init__(**kwargs)
+
+        self.first_value_open=0
+        self.first_value_ir10us = 0
+        self.first_value_yield10 = 0
+        self.first=1
 
         self.log.debug('DEV_state_shape: {}'.format(self.p.state_shape))
         self.log.debug('DEV_skip_frame: {}'.format(self.p.skip_frame))
@@ -84,9 +94,14 @@ class DevStrat_4_6(BTgymBaseStrategy):
         self.log.debug('DEV_episode_stat:\n{}'.format(self.p.episode_stat))
 
         # Define data channels:
-        self.channel_O = bt.Sum(self.data.open, - self.data.open(-1))
-        self.channel_H = bt.Sum(self.data.high, - self.data.open)
-        self.channel_L = bt.Sum(self.data.low,  - self.data.open)
+        self.channel_O = bt.Sum(self.data.open)
+        #self.channel_H = bt.Sum(self.data.high, - self.data.high(-1))
+        #self.channel_L = bt.Sum(self.data.low,  - self.data.open(-1))
+        self.channel_spx = bt.Sum(self.data.spx)
+        self.channel_ir10 = bt.Sum(self.data.ir10us)
+        self.channel_yield10 = bt.Sum(self.data.yield_10)
+
+
 
         # Episodic metadata:
         self.state['metadata'] = {
@@ -95,7 +110,13 @@ class DevStrat_4_6(BTgymBaseStrategy):
             'first_row': np.asarray(self.p.metadata['first_row'])
         }
 
+        #print ( "high value ", np.frombuffer(self.channel_O.get(size=30)))
+        #print ( "ir 10us ", np.frombuffer(self.data.ir10us.get(30)))
+
+
     def get_state(self):
+
+        #print("Getting state")
 
         T = 2e3  # EURUSD
         # T = 1e2 # EURUSD, Z-norm
@@ -103,12 +124,25 @@ class DevStrat_4_6(BTgymBaseStrategy):
 
         x = np.stack(
             [
+                np.frombuffer(self.channel_spx.get(size=self.dim_time)),
+                np.frombuffer(self.channel_yield10.get(size=self.dim_time)),
+                np.frombuffer(self.channel_ir10.get(size=self.dim_time)),
                 np.frombuffer(self.channel_O.get(size=self.dim_time)),
-                np.frombuffer(self.channel_H.get(size=self.dim_time)),
-                np.frombuffer(self.channel_L.get(size=self.dim_time)),
             ],
             axis=-1
         )
+        #print("before",x)
+        '''
+        if(self.first==1):
+            self.first_v=[x[0][0],x[0][1],x[0][2]]
+            self.first=0
+        for i in range(len(x)):
+            for j in range(len(x[0])):
+                x[i][j]=x[i][j]/self.first_v[j]
+        '''
+
+        #print("after",x)
+
         # Log-scale: NOT used. Seems to hurt performance.
         # x = log_transform(x)
 

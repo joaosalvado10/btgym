@@ -107,6 +107,7 @@ class BaseAacPolicy(object):
         # Aac policy and value outputs and action-sampling function:
         [self.on_logits, self.on_vf, self.on_sample] = dense_aac_network(on_x_lstm_out, ac_space)
 
+
         # Off-policy AAC network (shared):
         off_aac_x = conv_2d_network(self.off_state_in['external'], ob_space['external'], ac_space, reuse=True, **kwargs)
 
@@ -208,6 +209,7 @@ class BaseAacPolicy(object):
         if self.aux_estimate:
             self.callback['pixel_change'] = self.get_pc_target
 
+
     def get_initial_features(self):
         """Returns initial context.
 
@@ -229,6 +231,9 @@ class BaseAacPolicy(object):
         Returns:
             Action [one-hot], V-fn value, output RNN state
         """
+
+
+
         sess = tf.get_default_session()
         feeder = {pl: value for pl, value in zip(self.on_lstm_state_pl_flatten, flatten_nested(lstm_state))}
         feeder.update(feed_dict_from_nested(self.on_state_in, observation, expand_batch=True))
@@ -333,6 +338,7 @@ class Aac1dPolicy(BaseAacPolicy):
             **kwargs
         )
 
+
 class __Aac1dPolicy(BaseAacPolicy):
     """
     DEVELOPMENT: AAC policy for one-dimensional signal obs. state.
@@ -346,6 +352,8 @@ class __Aac1dPolicy(BaseAacPolicy):
                  lstm_layers=(256,),
                  aux_estimate=True,
                  **kwargs):
+
+
         """
         Defines [partially shared] on/off-policy networks for estimating  action-logits, value function,
         reward and state 'pixel_change' predictions.
@@ -367,6 +375,8 @@ class __Aac1dPolicy(BaseAacPolicy):
         self.lstm_layers = lstm_layers
         self.aux_estimate = aux_estimate
         self.callback = {}
+
+
 
         # Placeholders for obs. state input:
         self.on_state_in = nested_placeholders(ob_space, batch_dim=None, name='on_policy_state_in')

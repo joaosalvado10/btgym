@@ -1,18 +1,22 @@
 import os
 import backtrader as bt
 
-from btgym import BTgymEnv, BTgymDataset
+from btgym import BTgymEnv, BTgymDataset,ExtraLinesDataset
 from btgym.strategy.observers import Reward, Position, NormPnL
-from btgym.algorithms import Launcher, PPO, Unreal
+from btgym.algorithms import Launcher, PPO, Unreal, A3C
 
 from btgym.research import DevStrat_4_6
 
 from btgym.algorithms.policy import Aac1dPolicy
+from gym import spaces
 
 
 # Set backtesting engine parameters:
 
 MyCerebro = bt.Cerebro()
+
+
+
 
 MyCerebro.addstrategy(
     DevStrat_4_6,
@@ -32,11 +36,10 @@ MyCerebro.addobserver(Reward)
 MyCerebro.addobserver(Position)
 MyCerebro.addobserver(NormPnL)
 
-MyDataset = BTgymDataset(
+MyDataset = ExtraLinesDataset(
     #filename='.data/DAT_ASCII_EURUSD_M1_2010.csv',
     #filename='./data/DAT_ASCII_EURUSD_M1_201704.csv', #USE TO TEST
     filename='./data/Train_EurUsd.csv', #USE TO TRAIN
-
     start_weekdays={0, 1, 2, 3},
     episode_duration={'days': 120, 'hours': 0, 'minutes': 0},
     start_00=False,
@@ -54,10 +57,10 @@ env_config = dict(
         render_ylabel='OHL_diff.',
         render_size_episode=(12,8),
         render_size_human=(9, 4),
-        render_size_state=(11, 3),
+        render_size_state=(11, 4),
         render_dpi=75,
-        port=6000,
-        data_port=6999,
+        port=6430,
+        data_port=6739,
         connect_timeout=60,
         verbose=0,  # better be 0
     )
@@ -65,11 +68,11 @@ env_config = dict(
 
 cluster_config = dict(
     host='127.0.0.1',
-    port=12236,
-    num_workers= 3,  # Set according CPU's available
+    port=12446,
+    num_workers= 2,  # Set according CPU's available
     num_ps=1,
     num_envs=1,  # do not change yet
-    log_dir=os.path.expanduser('~/tmp/FINAL_UNREAL'),
+    log_dir=os.path.expanduser('~/tmp/New_features_Unreal-yiel10-open-ireu10'),
 )
 
 policy_config = dict(
