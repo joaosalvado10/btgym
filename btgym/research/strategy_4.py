@@ -44,6 +44,8 @@ class DevStrat_4_6(BTgymBaseStrategy):
     # every other step agent action is assumed to be 'hold':
     skip_frame = 10
 
+    dim_time =30
+
     # Number of timesteps reward estimation statistics are averaged over, should be:
     # skip_frame_period <= avg_period <= time_embedding_period:
     avg_period = time_dim
@@ -135,7 +137,7 @@ class DevStrat_4_6(BTgymBaseStrategy):
         #print ( "ir 10us ", np.frombuffer(self.data.ir10us.get(30)))
 
 
-    def get_state(self):
+    def get_market_state(self):
 
         T = 2e3  # EURUSD
         # T = 1e2 # EURUSD, Z-norm
