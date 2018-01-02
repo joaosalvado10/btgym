@@ -72,7 +72,7 @@ cluster_config = dict(
     num_workers= 28,  # Set according CPU's available
     num_ps=1,
     num_envs=1,  # do not change yet
-    log_dir=os.path.expanduser('~/tmp/New_features_Unreal-yiel10-open-ireu10'),
+    log_dir=os.path.expanduser('~/tmp/New_features_Unreal-yiel10'),
 )
 
 policy_config = dict(
