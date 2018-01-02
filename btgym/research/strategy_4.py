@@ -38,7 +38,7 @@ class DevStrat_4_6(BTgymBaseStrategy):
         # Note fake `Width` dimension to use 2d conv etc.:
         state_shape=
             {
-                'external': spaces.Box(low=-100, high=100, shape=(time_dim, 1, 4)),
+                'external': spaces.Box(low=-100, high=100, shape=(time_dim, 1, 3)),
                 'internal': spaces.Box(low=-2, high=2, shape=(time_dim, 1, 5)),
                 'metadata': DictSpace(
                     {
@@ -126,7 +126,7 @@ class DevStrat_4_6(BTgymBaseStrategy):
             [
                 np.frombuffer(self.channel_spx.get(size=self.dim_time)),
                 np.frombuffer(self.channel_yield10.get(size=self.dim_time)),
-                np.frombuffer(self.channel_ir10.get(size=self.dim_time)),
+                #np.frombuffer(self.channel_ir10.get(size=self.dim_time)),
                 np.frombuffer(self.channel_O.get(size=self.dim_time)),
             ],
             axis=-1
