@@ -37,7 +37,9 @@ class DevStrat_4_6(BTgymBaseStrategy):
     """
 
     # Time embedding period:
-    time_dim = 30  # NOTE: changed this --> change Policy  UNREAL for aux. pix control task upsampling params
+    dim_time = 30  # NOTE: changed this --> change Policy  UNREAL for aux. pix control task upsampling params
+
+
 
     # Number of environment steps to skip before returning next response,
     # e.g. if set to 10 -- agent will interact with environment every 10th step;
@@ -46,7 +48,7 @@ class DevStrat_4_6(BTgymBaseStrategy):
 
     # Number of timesteps reward estimation statistics are averaged over, should be:
     # skip_frame_period <= avg_period <= time_embedding_period:
-    avg_period = time_dim
+    avg_period = dim_time
 
     # Possible agent actions:
     portfolio_actions = ('hold', 'buy', 'sell', 'close')
@@ -55,7 +57,7 @@ class DevStrat_4_6(BTgymBaseStrategy):
         # Note: fake `Width` dimension to use 2d conv etc.:
         state_shape=
             {
-                'external': spaces.Box(low=-1, high=1, shape=(time_dim, 1, 4)),
+                'external': spaces.Box(low=-1, high=1, shape=(dim_time, 1, 4)),
                 'internal': spaces.Box(low=-2, high=2, shape=(avg_period, 1, 5)),
                 'action': spaces.Box(low=0, high=1, shape=(avg_period, 1, 1)),
                 'reward': spaces.Box(low=-1, high=1, shape=(avg_period, 1, 1)),
@@ -135,7 +137,7 @@ class DevStrat_4_6(BTgymBaseStrategy):
         #print ( "ir 10us ", np.frombuffer(self.data.ir10us.get(30)))
 
 
-    def get_state(self):
+    def get_market_state(self):
 
         T = 2e3  # EURUSD
         # T = 1e2 # EURUSD, Z-norm

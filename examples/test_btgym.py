@@ -69,10 +69,10 @@ env_config = dict(
 cluster_config = dict(
     host='127.0.0.1',
     port=12446,
-    num_workers= 28,  # Set according CPU's available
+    num_workers= 4,  # Set according CPU's available
     num_ps=1,
     num_envs=1,  # do not change yet
-    log_dir=os.path.expanduser('~/tmp/New_features_Unreal-yiel10'),
+    log_dir=os.path.expanduser('~/tmp/New_features_Unreal-yiel'),
 )
 
 policy_config = dict(
