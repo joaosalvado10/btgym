@@ -13,7 +13,7 @@ Documentation and community:
 https://gym.openai.com/
 ****
 ### <a name="outline"></a>Outline:
-General purpose of this wrapper is to provide gym-integrated framework for
+General purpose of this project is to provide gym-integrated framework for
 running reinforcement learning experiments 
 in [close to] real world algorithmic trading environments.
 
@@ -21,11 +21,14 @@ in [close to] real world algorithmic trading environments.
 
 ```
 DISCLAIMER:
-This package is neither out-of-the-box-moneymaker, nor it provides ready-to-converge RL solutions.
-Rather, it is framework for setting experiments with complex, non stationary, time-series based environments.
-I have no idea what kind of algorithm and setup will solve it [if any]. Explore on your own!
+Code presented here is research/development grade.
+Can be unstable, buggy, poor performing and is subject to change.
+
+Note that this package is neither out-of-the-box-moneymaker, nor it provides ready-to-converge RL solutions.
+Think of it as framework for setting experiments with complex, non stationary, time-series based environments.
+I have no idea what kind of algorithm and setup will solve it [if any]. This is work in progress.
 ```
-###### This work is in early development stage. Expect some surprises.
+
 ****
 ### <a name="contents"></a>Contents
 - [Installation](#install)
@@ -221,6 +224,18 @@ Consider a discrete-time finite-horizon partially observable Markov decision pro
  
  
 ### <a name="news"></a>[News and updates:](#title)
+- 5.12.17: Inner btgym comm. fixes >> speedup ~5%.
+
+- 02.12.17: Basic `sliding time-window train/test` framework implemented via 
+            [BTgymSequentialTrial()](https://kismuz.github.io/btgym/btgym.html#btgym.datafeed.BTgymSequentialTrial)
+            class.
+            
+- 29.11.17: Basic meta-learning RL^2 functionality implemented.
+    - See [Trial_Iterator Class](https://kismuz.github.io/btgym/btgym.html#btgym.datafeed.BTgymRandomTrial) and
+    [RL^2 policy](https://kismuz.github.io/btgym/btgym.research.html#btgym.research.policy_rl2.AacRL2Policy)
+    for description.
+    - Effectiveness is not tested yet, examples are to follow.
+
 - 24.11.17: A3C/UNREAL finally adapted to work with BTGym environments.
     - Examples with synthetic simple data(sine wawe) and historic financial data added,
       see [examples directory](./examples/);

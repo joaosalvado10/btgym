@@ -7,7 +7,7 @@ import tensorflow as tf
 from btgym.spaces import DictSpace as ObSpace  # now can simply be gym.Dict
 from btgym.algorithms import Memory, make_data_getter, RunnerThread
 from btgym.algorithms.math_utils import log_uniform
-from btgym.algorithms.losses import value_fn_loss_def, rp_loss_def, pc_loss_def, aac_loss_def, ppo_loss_def
+from btgym.algorithms.losses import value_fn_loss_def, rp_loss_def, pc_loss_def, aac_loss_def, ppo_loss_def, state_min_max_loss_def
 from btgym.algorithms.utils import feed_dict_rnn_context, feed_dict_from_nested, batch_stack
 
 
@@ -259,14 +259,14 @@ class BaseAAC(object):
 
         self.use_target_policy = _use_target_policy
 
-        self.log.info('AAC_{}: learn_rate: {:1.6f}, entropy_beta: {:1.6f}'.
+        self.log.warning('AAC_{}: learn_rate: {:1.6f}, entropy_beta: {:1.6f}'.
                       format(self.task, self.opt_learn_rate, self.model_beta))
 
         if self.use_off_policy_aac:
-            self.log.info('AAC_{}: off_aac_lambda: {:1.6f}'.format(self.task, self.off_aac_lambda,))
+            self.log.warning('AAC_{}: off_aac_lambda: {:1.6f}'.format(self.task, self.off_aac_lambda,))
 
         if self.use_any_aux_tasks:
-            self.log.info('AAC_{}: vr_lambda: {:1.6f}, pc_lambda: {:1.6f}, rp_lambda: {:1.6f}'.
+            self.log.warning('AAC_{}: vr_lambda: {:1.6f}, pc_lambda: {:1.6f}, rp_lambda: {:1.6f}'.
                           format(self.task, self.vr_lambda, self.pc_lambda, self.rp_lambda))
 
 
@@ -310,7 +310,7 @@ class BaseAAC(object):
                 self.log.debug('{}: {}'.format(v.name, v.get_shape()))
 
             #  Learning rate annealing:
-            learn_rate = tf.train.polynomial_decay(
+            learn_rate_decayed = tf.train.polynomial_decay(
                 self.opt_learn_rate,
                 self.global_step + 1,
                 self.opt_decay_steps,
@@ -318,7 +318,11 @@ class BaseAAC(object):
                 power=1,
                 cycle=False,
             )
-            clip_epsilon = tf.cast(self.clip_epsilon * learn_rate / self.opt_learn_rate, tf.float32)
+            clip_epsilon = tf.cast(self.clip_epsilon * learn_rate_decayed / self.opt_learn_rate, tf.float32)
+
+            # Freeze training if train_phase is False:
+            train_learn_rate = learn_rate_decayed * tf.cast(pi.train_phase, tf.float64)
+            self.log.debug('\nAAC_{}: learn rate ok'.format(self.task))
 
             # On-policy AAC loss definition:
             self.on_pi_act_target = tf.placeholder(tf.float32, [None, ref_env.action_space.n], name="on_policy_action_pl")
@@ -340,6 +344,17 @@ class BaseAAC(object):
             # Start accumulating total loss:
             self.loss = on_pi_loss
             model_summaries = on_pi_summaries
+
+            # wrong EXPERIMENT:
+            if False:
+                min_max_loss, min_max_summaries = state_min_max_loss_def(
+                    ohlc_targets=pi.raw_state,
+                    min_max_state=pi.state_min_max,
+                    name='on_policy',
+                    verbose=True
+                )
+                self.loss = self.loss + 0.1 * min_max_loss
+                model_summaries += min_max_summaries
 
             # Off-policy losses:
             self.off_pi_act_target = tf.placeholder(
@@ -420,11 +435,11 @@ class BaseAAC(object):
             # Since every observation mod. has same batch size - just take first key in a row:
             self.inc_step = self.global_step.assign_add(tf.shape(pi.on_state_in[list(pi.on_state_in.keys())[0]])[0])
 
-            # Each worker gets a different set of adam optimizer parameters
-            opt = tf.train.AdamOptimizer(learn_rate, epsilon=1e-5)
+            # Each worker gets a different set of adam optimizer parameters:
+            opt = tf.train.AdamOptimizer(train_learn_rate, epsilon=1e-5)
 
             #opt = tf.train.RMSPropOptimizer(
-            #    learning_rate=learn_rate,
+            #    learning_rate=train_learn_rate,
             #    decay=self.opt_decay,
             #    momentum=self.opt_momentum,
             #    epsilon=self.opt_epsilon,
@@ -439,7 +454,7 @@ class BaseAAC(object):
                 model_summaries += [
                     tf.summary.scalar("grad_global_norm", tf.global_norm(grads)),
                     tf.summary.scalar("var_global_norm", tf.global_norm(pi.var_list)),
-                    tf.summary.scalar("learn_rate", learn_rate),
+                    tf.summary.scalar("learn_rate", learn_rate_decayed),  # cause actual rate is a jaggy due to testing
                     tf.summary.scalar("total_loss", self.loss),
                 ]
 
@@ -454,44 +469,68 @@ class BaseAAC(object):
             # Episode-related summaries:
             self.ep_summary = dict(
                 # Summary placeholders
-                render_human=tf.placeholder(tf.uint8, [None, None, None, 3]),
-                render_model_input_ext=tf.placeholder(tf.uint8, [None, None, None, 3]),
-                render_episode=tf.placeholder(tf.uint8, [None, None, None, 3]),
                 render_atari=tf.placeholder(tf.uint8, [None, None, None, 1]),
                 total_r=tf.placeholder(tf.float32, ),
                 cpu_time=tf.placeholder(tf.float32, ),
                 final_value=tf.placeholder(tf.float32, ),
                 steps=tf.placeholder(tf.int32, ),
             )
+
+            if self.test_mode:
+                # For Atari:
+                self.ep_summary['render_op'] = tf.summary.image("model/state", self.ep_summary['render_atari'])
+
+            else:
+                # BTGym rendering:
+                self.ep_summary.update(
+                    {
+                        mode: tf.placeholder(tf.uint8, [None, None, None, 3]) for mode in self.env_list[0].render_modes
+                    }
+                )
+                self.ep_summary['render_op'] = tf.summary.merge(
+                    [tf.summary.image(mode, self.ep_summary[mode]) for mode in self.env_list[0].render_modes]
+                )
+
             # Environmnet rendering:
-            self.ep_summary['render_op'] = tf.summary.merge(
-                [
-                    tf.summary.image('human', self.ep_summary['render_human']),
-                    tf.summary.image('model_input_external', self.ep_summary['render_model_input_ext']),
-                    tf.summary.image('episode', self.ep_summary['render_episode']),
-                ],
-                name='render'
-            )
-            # For Atari:
-            self.ep_summary['test_render_op'] = tf.summary.image("model/state", self.ep_summary['render_atari'])
+            #if False:
+            #    self.ep_summary['btgym_render_op'] = tf.summary.merge(
+            #        [
+            #            tf.summary.image('human', self.ep_summary['render_human']),
+            #            tf.summary.image('model_input_external', self.ep_summary['render_model_input_ext']),
+            #            tf.summary.image('episode', self.ep_summary['render_episode']),
+            #        ],
+            #        name='render_btgym'
+            #    )
+            #    # For Atari:
+            #    self.ep_summary['atari_render_op'] = tf.summary.image("model/state", self.ep_summary['render_atari'])
 
             # Episode stat. summary:
-            self.ep_summary['stat_op'] = tf.summary.merge(
+            self.ep_summary['btgym_stat_op'] = tf.summary.merge(
                 [
-                    tf.summary.scalar('episode/total_reward', self.ep_summary['total_r']),
-                    tf.summary.scalar('episode/cpu_time_sec', self.ep_summary['cpu_time']),
-                    tf.summary.scalar('episode/final_value', self.ep_summary['final_value']),
-                    tf.summary.scalar('episode/env_steps', self.ep_summary['steps'])
+                    tf.summary.scalar('episode_train/total_reward', self.ep_summary['total_r']),
+                    tf.summary.scalar('episode_train/cpu_time_sec', self.ep_summary['cpu_time']),
+                    tf.summary.scalar('episode_train/final_value', self.ep_summary['final_value']),
+                    tf.summary.scalar('episode_train/env_steps', self.ep_summary['steps'])
                 ],
-                name='episode'
+                name='episode_train_btgym'
             )
-            self.ep_summary['test_stat_op'] = tf.summary.merge(
+            # Test episode stat. summary:
+            self.ep_summary['test_btgym_stat_op'] = tf.summary.merge(
+                [
+                    tf.summary.scalar('episode_test/total_reward', self.ep_summary['total_r']),
+                    tf.summary.scalar('episode_test/final_value', self.ep_summary['final_value']),
+                    tf.summary.scalar('episode_test/env_steps', self.ep_summary['steps'])
+                ],
+                name='episode_test_btgym'
+            )
+            self.ep_summary['atari_stat_op'] = tf.summary.merge(
                 [
                     tf.summary.scalar('episode/total_reward', self.ep_summary['total_r']),
                     tf.summary.scalar('episode/steps', self.ep_summary['steps'])
                 ],
                 name='episode_atari'
             )
+
             # Replay memory_config:
             if self.use_memory:
                 memory_config = dict(
@@ -688,20 +727,33 @@ class BaseAAC(object):
 
     def process(self, sess):
         """
-        Grabs a on_policy_rollout that's been produced by the thread runner,
-        samples off_policy rollout[s] from replay memory and updates the parameters.
+        Grabs a on_policy_rollout that's been produced by the thread runner. If data identified as 'train data' -
+        samples off_policy rollout[s] from replay memory and updates the parameters; writes summaries if any.
         The update is then sent to the parameter server.
+        If on_policy_rollout contains 'test data' -  no policy update is performed and learn rate is set to zero;
+        Meanwile test data are stored in replay memory.
         """
+
+        # Collect data from child thread runners:
+        data = self.get_data()
+
+        # Test or train: if at least one rollout from parallel runners is test rollout -
+        # set learn rate to zero for entire minibatch. Doh.
+        try:
+            is_train = not np.asarray([env['state']['metadata']['type'] for env in data['on_policy']]).any()
+
+        except KeyError:
+            is_train = True
 
         # Copy weights from local policy to local target policy:
         if self.use_target_policy and self.local_steps % self.pi_prime_update_period == 0:
             sess.run(self.sync_pi_prime)
 
-        # Copy weights from shared to local new_policy:
-        sess.run(self.sync_pi)
+        if is_train:
+            # If there is no testing rollouts  - copy weights from shared to local new_policy:
+            sess.run(self.sync_pi)
 
-        # Collect data from child thread runners:
-        data = self.get_data()
+        #self.log.debug('is_train: {}'.format(is_train))
 
         # Process minibatch for on-policy train step:
         on_policy_rollouts = data['on_policy']
@@ -728,7 +780,7 @@ class BaseAAC(object):
                 self.on_pi_act_target: on_policy_batch['action'],
                 self.on_pi_adv_target: on_policy_batch['advantage'],
                 self.on_pi_r_target: on_policy_batch['r'],
-                self.local_network.train_phase: True,
+                self.local_network.train_phase: is_train,  # Zeroes learn rate, [+ batch_norm]
             }
         )
         if self.use_target_policy:
@@ -806,10 +858,10 @@ class BaseAAC(object):
             if self.use_value_replay:
                 feed_dict.update(self.get_vr_feeder(off_policy_batch))
 
-        # Every worker writes episode and model summaries:
+        # Every worker writes train episode and model summaries:
         ep_summary_feeder = {}
 
-        # Collect episode summaries from all env runners:
+        # Look for train episode summaries from all env runners:
         for stat in data['ep_summary']:
             if stat is not None:
                 for key in stat.keys():
@@ -825,14 +877,34 @@ class BaseAAC(object):
 
             if self.test_mode:
                 # Atari:
-                fetched_episode_stat = sess.run(self.ep_summary['test_stat_op'], ep_summary_feed_dict)
+                fetched_episode_stat = sess.run(self.ep_summary['atari_stat_op'], ep_summary_feed_dict)
 
             else:
                 # BTGym
-                fetched_episode_stat = sess.run(self.ep_summary['stat_op'], ep_summary_feed_dict)
+                fetched_episode_stat = sess.run(self.ep_summary['btgym_stat_op'], ep_summary_feed_dict)
 
             self.summary_writer.add_summary(fetched_episode_stat, sess.run(self.global_episode))
             self.summary_writer.flush()
+
+        # Every worker writes test episode  summaries:
+        test_ep_summary_feeder = {}
+
+        # Look for test episode summaries:
+        for stat in data['test_ep_summary']:
+            if stat is not None:
+                for key in stat.keys():
+                    if key in test_ep_summary_feeder.keys():
+                        test_ep_summary_feeder[key] += [stat[key]]
+                    else:
+                        test_ep_summary_feeder[key] = [stat[key]]
+                        # Average values among thread_runners, if any, and write episode summary:
+            if test_ep_summary_feeder != {}:
+                test_ep_summary_feed_dict = {
+                    self.ep_summary[key]: np.average(list) for key, list in test_ep_summary_feeder.items()
+                }
+                fetched_test_episode_stat = sess.run(self.ep_summary['test_btgym_stat_op'], test_ep_summary_feed_dict)
+                self.summary_writer.add_summary(fetched_test_episode_stat, sess.run(self.global_episode))
+                self.summary_writer.flush()
 
         wirte_model_summary =\
             self.local_steps % self.model_summary_freq == 0
@@ -843,15 +915,18 @@ class BaseAAC(object):
                 render_feed_dict = {
                     self.ep_summary[key]: pic for key, pic in data['render_summary'][0].items()
                 }
-                if self.test_mode:
-                    renderings = sess.run(self.ep_summary['test_render_op'], render_feed_dict)
-
-                else:
-                    renderings = sess.run(self.ep_summary['render_op'], render_feed_dict)
+                renderings = sess.run(self.ep_summary['render_op'], render_feed_dict)
+                #if False:
+                #    if self.test_mode:
+                #        renderings = sess.run(self.ep_summary['atari_render_op'], render_feed_dict)
+                #
+                #    else:
+                #        renderings = sess.run(self.ep_summary['btgym_render_op'], render_feed_dict)
 
                 self.summary_writer.add_summary(renderings, sess.run(self.global_episode))
                 self.summary_writer.flush()
 
+        #fetches = [self.train_op, self.local_network.debug]  # include policy debug shapes
         fetches = [self.train_op]
 
         if wirte_model_summary:
@@ -872,12 +947,18 @@ class BaseAAC(object):
 
         self.local_steps += 1
 
+        # print debug info:
+        #for k, v in fetched[1].items():
+        #    print('{}: {}'.format(k,v))
+        #print('\n')
+
         #for k, v in feed_dict.items():
         #    try:
         #        print(k, v.shape)
         #    except:
         #        print(k, type(v))
 
+        # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
 Unreal = BaseAAC
 
@@ -993,4 +1074,5 @@ class PPO(BaseAAC):
             _use_target_policy=True,
             **kwargs
         )
+
 

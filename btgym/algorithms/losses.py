@@ -36,12 +36,17 @@ def aac_loss_def(act_target, adv_target, r_target, pi_logits, pi_vf, pi_prime_lo
 
         loss = pi_loss + vf_loss - entropy * entropy_beta
 
+        mean_vf = tf.reduce_mean(pi_vf)
+
         summaries = [
             tf.summary.scalar('policy_loss', pi_loss),
             tf.summary.scalar('value_loss', vf_loss),
         ]
         if verbose:
-            summaries += [tf.summary.scalar('entropy', entropy)]
+            summaries += [
+                tf.summary.scalar('entropy', entropy),
+                tf.summary.scalar('value_fn', mean_vf),
+            ]
 
     return loss, summaries
 
@@ -106,7 +111,7 @@ def ppo_loss_def(act_target, adv_target, r_target, pi_logits, pi_vf, pi_prime_lo
                 tf.summary.scalar('entropy', entropy),
                 tf.summary.scalar('Dkl_old_new', mean_kl_old_new),
                 tf.summary.scalar('pi_ratio', mean_pi_ratio),
-                tf.summary.scalar('value_f', mean_vf),
+                tf.summary.scalar('value_fn', mean_vf),
             ]
 
     return loss, summaries
@@ -211,6 +216,21 @@ def rp_loss_def(rp_targets, pi_rp_logits, name='_rp_', verbose=False):
         )[0]
         if verbose:
             summaries = [tf.summary.scalar('class_loss', loss), ]
+        else:
+            summaries = []
+
+    return loss, summaries
+
+
+def state_min_max_loss_def(ohlc_targets, min_max_state, name='_mml_', verbose=False):
+    with tf.name_scope(name + '/min_max'):
+        hi = tf.reduce_max(ohlc_targets)
+        low = tf.reduce_min(ohlc_targets)
+        loss = tf.reduce_mean(tf.square(hi - min_max_state[:,0]) + tf.square(low - min_max_state[:,1]))
+
+        if verbose:
+            summaries = [tf.summary.scalar('state_mm_loss', loss), ]
+
         else:
             summaries = []
 

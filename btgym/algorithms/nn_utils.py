@@ -8,6 +8,7 @@ import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.rnn as rnn
 from tensorflow.contrib.layers import flatten as batch_flatten
+from tensorflow.contrib.layers import layer_norm as norm_layer
 from tensorflow.python.util.nest import flatten as flatten_nested
 from btgym.algorithms.utils import rnn_placeholders
 
@@ -128,46 +129,73 @@ def conv1d(x, num_filters, name, filter_size=3, stride=2, pad="SAME", dtype=tf.f
         return tf.nn.conv1d(x, w, stride_shape, pad) + b
 
 
+def conv2d_dw(x, num_filters, name='conv2d_dw', filter_size=(3, 3), stride=(1, 1), pad="SAME", dtype=tf.float32,
+              collections=None, reuse=False):
+    """
+    Depthwise 2D convolution layer.
+    """
+    with tf.variable_scope(name, reuse=reuse):
+        stride_shape = [1, stride[0], stride[1], 1]
+        filter_shape = [filter_size[0], filter_size[1], int(x.get_shape()[-1]), num_filters]
+        fan_in = np.prod(filter_shape[:3])
+        fan_out = np.prod(filter_shape[:2]) * num_filters
+        # initialize weights with random weights
+        w_bound = np.sqrt(6. / (fan_in + fan_out))
+
+        w = tf.get_variable("W", filter_shape, dtype,
+                            tf.random_uniform_initializer(-w_bound, w_bound), collections=collections)
+        b = tf.get_variable("b", [1, 1, 1, num_filters * int(x.get_shape()[-1])],
+                            initializer=tf.constant_initializer(0.0), collections=collections)
+        return tf.nn.depthwise_conv2d(x, w, stride_shape, pad, [1, 1]) + b
+
+
 def conv_2d_network(x,
                     ob_space,
                     ac_space,
+                    conv_2d_layer_ref=conv2d,
                     conv_2d_num_layers=4,
                     conv_2d_num_filters=32,
                     conv_2d_filter_size=(3, 3),
                     conv_2d_stride=(2, 2),
                     pad="SAME",
                     dtype=tf.float32,
+                    name='conv2d',
                     collections=None,
                     reuse=False,
                     **kwargs):
     """
     Stage1 network: from preprocessed 2D input to estimated features.
-    Encapsulates convolutions, [possibly] skip-connections etc. Can be shared.
+    Encapsulates convolutions + layer normalisation + nonlinearity. Can be shared.
 
     Returns:
         tensor holding state features;
     """
-    for i in range(conv_2d_num_layers):
-        x = tf.nn.elu(
-            conv2d(
-                x,
-                conv_2d_num_filters,
-                "conv2d_{}".format(i + 1),
-                conv_2d_filter_size,
-                conv_2d_stride,
-                pad,
-                dtype,
-                collections,
-                reuse
+    with tf.variable_scope(name, reuse=reuse):
+        for i in range(conv_2d_num_layers):
+
+            x = tf.nn.elu(
+                norm_layer(
+                    conv_2d_layer_ref(
+                        x,
+                        conv_2d_num_filters,
+                        "_layer_{}".format(i + 1),
+                        conv_2d_filter_size,
+                        conv_2d_stride,
+                        pad,
+                        dtype,
+                        collections,
+                        reuse
+                    ),
+                    scope=name + "_layer_{}".format(i + 1)
+                )
             )
-        )
-    # A3c/BaseAAC original paper design:
-    # x = tf.nn.elu(conv2d(x, 16, 'conv2d_1', [8, 8], [4, 4], pad, dtype, collections, reuse))
-    # x = tf.nn.elu(conv2d(x, 32, 'conv2d_2', [4, 4], [2, 2], pad, dtype, collections, reuse))
-    # x = tf.nn.elu(
-    #    linear(batch_flatten(x), 256, 'conv_2d_dense', self.normalized_columns_initializer(0.01), reuse=reuse)
-    # )
-    return x
+        # A3c/BaseAAC original paper design:
+        #x = tf.nn.elu(conv2d(x, 16, 'conv2d_1', [8, 8], [4, 4], pad, dtype, collections, reuse))
+        #x = tf.nn.elu(conv2d(x, 32, 'conv2d_2', [4, 4], [2, 2], pad, dtype, collections, reuse))
+        #x = tf.nn.elu(
+        #   linear(batch_flatten(x), 256, 'conv_2d_dense', normalized_columns_initializer(0.01), reuse=reuse)
+        #)
+        return x
 
 
 def conv_1d_network(x,
@@ -205,7 +233,15 @@ def conv_1d_network(x,
     return x
 
 
-def lstm_network(x, lstm_sequence_length, lstm_class=rnn.BasicLSTMCell, lstm_layers=(256,), reuse=False, **kwargs):
+def lstm_network(
+        x,
+        lstm_sequence_length,
+        lstm_class=rnn.BasicLSTMCell,
+        lstm_layers=(256,),
+        name='lstm',
+        reuse=False,
+        **kwargs
+    ):
     """
     Stage2 network: from features to flattened LSTM output.
     Defines [multi-layered] dynamic [possibly shared] LSTM network.
@@ -216,7 +252,7 @@ def lstm_network(x, lstm_sequence_length, lstm_class=rnn.BasicLSTMCell, lstm_lay
          lstm state output tensor;
          lstm flattened feed placeholders as tuple.
     """
-    with tf.variable_scope('lstm', reuse=reuse):
+    with tf.variable_scope(name, reuse=reuse):
         # Flatten, add action/reward and expand with fake [time] batch? dim to feed LSTM bank:
         #x = tf.concat([x, a_r] ,axis=-1)
         #x = tf.concat([batch_flatten(x), a_r], axis=-1)
@@ -225,7 +261,7 @@ def lstm_network(x, lstm_sequence_length, lstm_class=rnn.BasicLSTMCell, lstm_lay
         # Define LSTM layers:
         lstm = []
         for size in lstm_layers:
-            lstm += [lstm_class(size, state_is_tuple=True)]
+            lstm += [lstm_class(size)] #, state_is_tuple=True)]
 
         lstm = rnn.MultiRNNCell(lstm, state_is_tuple=True)
         # Get time_dimension as [1]-shaped tensor:
@@ -248,7 +284,7 @@ def lstm_network(x, lstm_sequence_length, lstm_class=rnn.BasicLSTMCell, lstm_lay
     return x_out, lstm_init_state, lstm_state_out, lstm_state_pl_flatten
 
 
-def dense_aac_network(x, ac_space, reuse=False):
+def dense_aac_network(x, ac_space, name='dense_aac', reuse=False):
     """
     Stage3 network: from LSTM flattened output to advantage actor-critic.
 
@@ -257,9 +293,10 @@ def dense_aac_network(x, ac_space, reuse=False):
         value function tensor
         action sampling function.
     """
-    logits = linear(x, ac_space, "action", normalized_columns_initializer(0.01), reuse=reuse)
-    vf = tf.reshape(linear(x, 1, "value", normalized_columns_initializer(1.0), reuse=reuse), [-1])
-    sample = categorical_sample(logits, ac_space)[0, :]
+    with tf.variable_scope(name, reuse=reuse):
+        logits = linear(x, ac_space, "action", normalized_columns_initializer(0.01), reuse=reuse)
+        vf = tf.reshape(linear(x, 1, "value", normalized_columns_initializer(1.0), reuse=reuse), [-1])
+        sample = categorical_sample(logits, ac_space)[0, :]
 
     return logits, vf, sample
 

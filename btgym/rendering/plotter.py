@@ -44,6 +44,7 @@ class BTgymPlotter(Plot_OldSync):
         fig.set_tight_layout(tight)
         fig.canvas.draw()
 
+
 class DrawCerebro(multiprocessing.Process):
     """That's the way we plot it...
     """

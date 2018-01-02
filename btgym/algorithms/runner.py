@@ -106,7 +106,7 @@ def env_runner(sess,
                summary_writer,
                episode_summary_freq,
                env_render_freq,
-               test,
+               atari_test,
                ep_summary,
                memory_config):
     """
@@ -122,7 +122,7 @@ def env_runner(sess,
         rollout_length:         int
         episode_summary_freq:   int
         env_render_freq:        int
-        test:                   Atari or BTGyn
+        atari_test:             bool, Atari or BTGyn
         ep_summary:             dict of tf.summary op and placeholders
         memory_config:          replay memory configuration dictionary
 
@@ -132,20 +132,13 @@ def env_runner(sess,
 
     if memory_config is not None:
         memory = memory_config['class_ref'](**memory_config['kwargs'])
-        """
-            history_size=memory_config['size'],
-            max_sample_size=rollout_length,
-            reward_threshold=memory_config['rp_reward_threshold'],
-            task=task,
-            log=None,
-            rollout_provider=None
-        """
+
     else:
         memory = _DummyMemory()
 
 
     last_state = env.reset()
-    last_context = policy.get_initial_features()
+    last_context = policy.get_initial_features(state=last_state)
     length = 0
     local_episode = 0
     reward_sum = 0
@@ -162,6 +155,7 @@ def env_runner(sess,
     total_steps_atari = []
 
     ep_stat = None
+    test_ep_stat = None
     render_stat = None
 
     while True:
@@ -172,8 +166,6 @@ def env_runner(sess,
 
         # argmax to convert from one-hot:
         state, reward, terminal, info = env.step(action.argmax())
-        #if not test:
-        #    state = state['model_input']
 
         # Partially collect first experience of rollout:
         last_experience = {
@@ -185,7 +177,6 @@ def env_runner(sess,
             'terminal': terminal,
             'context': last_context,
             'last_action_reward': last_action_reward,
-            #'pixel_change': 0 #policy.get_pc_target(state, last_state),
         }
         # Execute user-defined callbacks to policy, if any:
         for key, callback in policy.callback.items():
@@ -206,7 +197,7 @@ def env_runner(sess,
 
                 # Argmax to convert from one-hot:
                 state, reward, terminal, info = env.step(action.argmax())
-                #if not test:
+                #if not atari_test:
                 #        state = state['model_input']
 
                 # Partially collect next experience:
@@ -247,54 +238,68 @@ def env_runner(sess,
                 # Accumulate values for averaging:
                 total_r += [reward_sum]
                 total_steps_atari += [length]
-                if not test:
+                if not atari_test:
                     episode_stat = env.get_stat()  # get episode statistic
                     last_i = info[-1]  # pull most recent info
                     cpu_time += [episode_stat['runtime'].total_seconds()]
                     final_value += [last_i['broker_value']]
                     total_steps += [episode_stat['length']]
+                #print('ep. metadata:', state['metadata'])
 
-                # Episode statistic:
-                if local_episode % episode_summary_freq == 0:
-                    if not test:
-                        # BTgym:
-                        ep_stat = dict(
-                            total_r=np.average(total_r),
-                            cpu_time=np.average(cpu_time),
-                            final_value=np.average(final_value),
-                            steps=np.average(total_steps)
-                        )
+                # Episode statistics:
+                try:
+                    # Was it test episode ( `type` in metadata is not zero)?
+                    if not atari_test and state['metadata']['type']:
+                        is_test_episode = True
+
                     else:
-                        # Atari:
-                        ep_stat = dict(
-                            total_r=np.average(total_r),
-                            steps=np.average(total_steps_atari)
-                        )
-                    total_r = []
-                    cpu_time = []
-                    final_value = []
-                    total_steps = []
-                    total_steps_atari = []
+                        is_test_episode = False
+
+                except KeyError:
+                    is_test_episode = False
+
+                if is_test_episode:
+                    #print(task, total_r)
+                    test_ep_stat = dict(
+                        total_r=total_r[-1],
+                        final_value=final_value[-1],
+                        steps=total_steps[-1]
+                    )
+                else:
+                    if local_episode % episode_summary_freq == 0:
+                        if not atari_test:
+                            # BTgym:
+                            ep_stat = dict(
+                                total_r=np.average(total_r),
+                                cpu_time=np.average(cpu_time),
+                                final_value=np.average(final_value),
+                                steps=np.average(total_steps)
+                            )
+                        else:
+                            # Atari:
+                            ep_stat = dict(
+                                total_r=np.average(total_r),
+                                steps=np.average(total_steps_atari)
+                            )
+                        total_r = []
+                        cpu_time = []
+                        final_value = []
+                        total_steps = []
+                        total_steps_atari = []
 
                 if task == 0 and local_episode % env_render_freq == 0 :
-                    if not test:
-                        # Render environment (chief worker only, and not in atari test mode):
-
-                        render_stat = dict(
-                            render_human=env.render('human')[None,:],
-                            render_model_input_ext=env.render('external')[None, :],
-                            render_episode=env.render('episode')[None,:],
-                        )
+                    if not atari_test:
+                        # Render environment (chief worker only, and not in atari atari_test mode):
+                        render_stat = {
+                            mode: env.render(mode)[None,:] for mode in env.render_modes
+                        }
                     else:
                         # Atari:
                         render_stat = dict(render_atari=state['external'][None,:] * 255)
 
                 # New episode:
                 last_state = env.reset()
-                #if not test:
-                #    last_state = last_state['model_input']
-
-                last_context = policy.get_initial_features()
+                last_context = policy.get_initial_features(state=last_state, context=last_context)
                 length = 0
                 reward_sum = 0
                 last_action = np.zeros(env.action_space.n)
@@ -319,7 +324,21 @@ def env_runner(sess,
             last_experience['r'] = np.asarray([0.0])
 
         rollout.add(last_experience)
-        memory.add(last_experience)
+
+        # Only training rollouts are added to replay memory:
+        try:
+            # Was it test (`type` in metadata is not zero)?
+            if not atari_test and last_experience['state']['metadata']['type']:
+                is_test = True
+
+            else:
+                is_test = False
+
+        except KeyError:
+            is_test = False
+
+        if not is_test:
+            memory.add(last_experience)
 
         #print('last_experience {}'.format(last_experience['position']))
         #for k, v in last_experience.items():
@@ -352,10 +371,12 @@ def env_runner(sess,
                 off_policy=memory.sample_uniform(sequence_size=rollout_length),
                 off_policy_rp=memory.sample_priority(exact_size=True),
                 ep_summary=ep_stat,
+                test_ep_summary=test_ep_stat,
                 render_summary=render_stat,
             )
             yield data
 
             ep_stat = None
+            test_ep_stat = None
             render_stat = None
 

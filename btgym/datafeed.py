@@ -22,6 +22,8 @@ import logging
 
 import datetime
 import random
+from numpy.random import beta as random_beta
+import math
 import os
 
 import backtrader.feeds as btfeeds
@@ -128,43 +130,53 @@ class BTgymDataset:
 
     def __init__(self, **kwargs):
         """
+
         Args:
-            **kwargs:
-                filename=None,  # Str or list of str, should be given either here  or when calling read_csv()
 
-                Default parameters for source-specific CSV datafeed class,
-                correctly parses 1 minute Forex generic ASCII
-                data files from www.HistData.com:
+            filename:                       Str or list of str, should be given either here or when calling read_csv(),
+                                            see `Notes`.
 
-                CSV to Pandas params:
+            specific_params CSV to Pandas parsing
 
-                    sep=';',
-                    header=0,
-                    index_col=0,
-                    parse_dates=True,
-                    names=['open', 'high', 'low', 'close', 'volume'],
+            sep:                            ';'
+            header:                         0
+            index_col:                      0
+            parse_dates:                    True
+            names:                          ['open', 'high', 'low', 'close', 'volume']
 
-                Pandas to BT.feeds params:
+            specific_params Pandas to BT.feeds conversion
 
-                    timeframe=1,  # 1 minute.
-                    datetime=0,
-                    open=1,
-                    high=2,
-                    low=3,
-                    close=4,
-                    volume=-1,
-                    openinterest=-1,
+            timeframe=1:                    1 minute.
+            datetime:                       0
+            open:                           1
+            high:                           2
+            low:                            3
+            close:                          4
+            volume:                         -1
+            openinterest:                   -1
 
-                Random-sampling params:
+            specific_params Sampling
 
-                    start_weekdays=[0, 1, 2, 3, ],  # Only weekdays from the list will be used for episode start.
-                    start_00=True,  # Episode start time will be set to first record of the day (usually 00:00).
-                    episode_len_days=1,  # Maximum episode time duration in days, hours, minutes:
-                    episode_len_hours=23,
-                    episode_len_minutes=55,
-                    time_gap_days=0,  # Maximum data time gap allowed within sample in days, hours. Thereby,
-                    time_gap_hours=5,  # if set to be < 1 day,
-                        samples containing weekends and holidays gaps will be rejected.
+            start_weekdays:                 [0, 1, 2, 3, ] - Only weekdays from the list will be used for episode start.
+            start_00:                       True - Episode start time will be set to first record of the day
+                                            (usually 00:00).
+            episode_duration:               {'days': 1, 'hours': 23, 'minutes': 55} - Maximum episode time duration
+                                            in days, hours, minutes
+
+            time_gap:                       {'hours': 5} - Data omittance threshold: maximum data time gap allowed
+                                            within sample in days, hours. Thereby, if set to be < 1 day,
+                                            samples containing weekends and holidays gaps will be rejected.
+
+        Note:
+            - CSV file can contain duplicate records, cheks will be performed and all duplicates will be removed;
+
+            - CSV file should be properly sorted by date_time in ascending order, no sorting checks performed.
+
+            - When supplying list of file_names, all files should be also listed ascending by their time period,
+              no correct sampling will be possible otherwise.
+
+            - Default parameters are source-specific and made to correctly parse 1 minute Forex generic ASCII
+              data files from www.HistData.com. Tune according to your data source.
         """
         # To log or not to log:
         try:
@@ -376,7 +388,7 @@ class BTgymDataset:
             return 'Data not ready. Call .reset() first.'
 
         episode = self._sample_random()
-        episode.metadata['type'] = 'random_sample'
+        episode.metadata['type'] = False  # always `train`
         episode.metadata['trial_num'] = False
         episode.metadata['sample_num'] = False
         return episode
@@ -412,12 +424,17 @@ class BTgymDataset:
             self.log.debug('Episode start: {}, weekday: {}.'.format(episode_first_day, episode_first_day.weekday()))
 
             # Keep sampling until good day:
-            while not episode_first_day.weekday() in self.start_weekdays:
+            while not episode_first_day.weekday() in self.start_weekdays and attempts <= max_attempts:
                 self.log.debug('Not a good day to start, resampling...')
                 first_row = int((self.data.shape[0] - self.episode_num_records - 1) * random.random())
                 episode_first_day = self.data[first_row:first_row + 1].index[0]
                 self.log.debug('Episode start: {}, weekday: {}.'.format(episode_first_day, episode_first_day.weekday()))
                 attempts +=1
+
+            # Check if managed to get proper weekday:
+            assert attempts <= max_attempts, \
+                'Quitting after {} sampling attempts. Hint: check sampling params / dataset consistency.'. \
+                format(attempts)
 
             # If 00 option set, get index of first record of that day:
             if self.start_00:
@@ -458,18 +475,23 @@ class BTgymDataset:
         self.log.error(msg)
         raise RuntimeError(msg)
 
-    def _sample_position(self, position, tolerance=10):
+    def _sample_interval(self, interval, b_alpha=1, b_beta=1):
         """
-        Samples continuous subset of data, starting from given 'position' with allowed `tolerance`.
+        Samples continuous subset of data,
+        such as entire episode records lie within positions specified by interval or.
+        Episode start position within interval is drawn from beta-distribution parametrised by `b_alpha, b_beta`.
+        By default distribution is uniform one.
 
         Args:
-            position:   position of record to start subset from.
-            tolerance:  actual start position is uniformly sampled from [position - tolerance, position + tolerance]
+            interval:       tuple, list or 1d-array of integers of length 2: [lower_position, upper_position];
+            b_alpha:        sampling B-distribution alpha param;
+            b_beta:         sampling B-distribution beta param;
+
 
         Returns:
-             - BTgymDataset instance such as: number of records ~ max_episode_len,
-                where record number tolerance is inferred from `time_gap` param;
-                first data row = `position` +- tolerance
+             - BTgymDataset instance such as:
+                1. number of records ~ max_episode_len, subj. to `time_gap` param;
+                2. actual episode start position is sampled from `interval`;
              - `False` if it is not possible to sample instance with set args.
         """
         try:
@@ -478,16 +500,13 @@ class BTgymDataset:
         except (AssertionError, AttributeError) as e:
             raise  AssertionError('BTgymDataset instance holds no data. Hint: forgot to call .read_csv()?')
 
+        assert len(interval) == 2, 'Invalid interval arg: expected list or tuple of size 2, got: {}'.format(interval)
+
         sample_num_records = self.episode_num_records
 
-        try:
-            assert tolerance / 2 < position\
-                   < int((self.data.shape[0] - sample_num_records - int(tolerance / 2) - 1))
-
-        except AssertionError:
-            self.log.warning('Cannot sample with size {}, starting from position {}+-{} from dataset of {} records'.
-                             format(sample_num_records, position, tolerance, self.data.shape[0]))
-            return False
+        assert interval[0] < interval[-1] < int(self.data.shape[0] - sample_num_records), \
+            'Cannot sample with size {}, in {} from dataset of {} records'.\
+             format(sample_num_records, interval, self.data.shape[0])
 
         self.log.debug('Maximum sample time duration set to: {}.'.format(self.max_episode_len))
         self.log.debug('Respective number of steps: {}.'.format(sample_num_records))
@@ -499,17 +518,28 @@ class BTgymDataset:
 
         # # Keep sampling random enter points until all conditions are met:
         while attempts <= max_attempts:
-            first_row = position - tolerance + round(2 * tolerance * random.random())
+
+            first_row = interval[0] + round(
+                (interval[-1] - interval[0] - sample_num_records - 1) * random_beta(a=b_alpha, b=b_beta)
+            )
+
             episode_first_day = self.data[first_row:first_row + 1].index[0]
             self.log.debug('Sample start: {}, weekday: {}.'.format(episode_first_day, episode_first_day.weekday()))
 
             # Keep sampling until good day:
-            while not episode_first_day.weekday() in self.start_weekdays:
+            while not episode_first_day.weekday() in self.start_weekdays and attempts <= max_attempts:
                 self.log.debug('Not a good day to start, resampling...')
-                first_row = position - tolerance + round(2 * tolerance * random.random())
+                first_row = interval[0] + round(
+                    (interval[-1] - interval[0] - sample_num_records - 1) * random_beta(a=b_alpha, b=b_beta)
+                )
                 episode_first_day = self.data[first_row:first_row + 1].index[0]
                 self.log.debug('Sample start: {}, weekday: {}.'.format(episode_first_day, episode_first_day.weekday()))
                 attempts += 1
+
+            # Check if managed to get proper weekday:
+            assert attempts <= max_attempts, \
+                'Quitting after {} sampling attempts. Hint: check sampling params / dataset consistency.'.\
+                format(attempts)
 
             # If 00 option set, get index of first record of that day:
             if self.start_00:
@@ -533,89 +563,214 @@ class BTgymDataset:
                 self.log.debug('Sample accepted.')
                 # If sample OK - return episodic-dataset:
                 episode = self.__class__(**self.params)
-                episode.filename = '_btgym_position_sample_' + str(adj_timedate)
+                episode.filename = '_btgym_interval_sample_' + str(adj_timedate)
                 self.log.info('Sample id: <{}>.'.format(episode.filename))
                 episode.data = episode_sample
-                episode.metadata['type'] = 'position_sample'
+                episode.metadata['type'] = 'interval_sample'
                 episode.metadata['first_row'] = first_row
                 return episode
 
             else:
-                self.log.debug('Duration too big, resampling...\n')
+                self.log.debug('Attempt {}: duration too big, resampling, ...\n'.format(attempts))
                 attempts += 1
 
         # Got here -> sanity check failed:
         msg = ('Quitting after {} sampling attempts.' +
                'Hint: check sampling params / dataset consistency.').format(attempts)
         self.log.warning(msg)
-        return False
+        raise AssertionError(msg)
 
 
 class BTgymSequentialTrial(BTgymDataset):
     """
     Sequential Data Trials iterator.
+    Enables sliding or expanding time-window training and testing for the dataset of time-ordered records.
 
-    See `Notes` at `BTgymTrialRandomIterator()` for description and motivation.
+    Single Trial is defined by:
 
-    For this class, `Trials` are sampled in ordered `sliding timewindow` rather than random fashion.
+    - support train and test intervals::
+
+        [train_start_time <-> train_end_time], [test_start_time <-> test_end_time],
+        such as:
+        train_start_time < train_end_time + 1 = test_start_time < test_end_time,
+        where `1` stands for next closest time.
+
+    - number of train episodes to draw from train support interval;
+
+    - number of test episodes to draw from test support interval;
+
+    Sliding time-window data iterating:
+
+    If training is started from the beginningg of the dataset, `train_start_time` is set to that of first record,
+    for example, for the start of the year::
+
+        Trial train interval: 19 days, 23:59:00; test interval: 2 days, 23:59:00;
+        Train episodes per trial: 1000; test episodes per trial: 10, test_period: 50, iterating from 0-th
+
+    Then first trial intervals will be (note that omitted data periods like holidays are excluded)::
+
+        Training interval: 2016-01-03 17:01:00 <--> 2016-01-31 17:14:00;
+        Testing  interval: 2016-01-31 17:15:00 <--> 2016-02-03 17:14:00;
+
+    Since `reset_data()` method call, every call to `BTgymSequentialTrial.sample()` method will return randomly drawn
+    train episode from train interval, until reached `test_period` number of samples (here -50). Than iterator `pauses
+    training` and each next call to `sample()` will return randomly drawn episode from test interval,
+    until again max. number is reached (here - 10).
+    Train-test loop is repeated until max. number of `Trial` train samples is reached ( here - 1000).
+
+    Next call to `sample()` will result in following: next `Trial` will be formed such as::
+
+        train_start_time_next_trial = `test_end_time_previous_trial + 1
+
+    i.e. `Trial` will be shifted by the duration of test period,
+    than first train episode of the new `Trial` will be sampled and returned.
+
+    Repeats until entire dataset is exhausted.
+
+    Note that while train periods are overlapping, test periods form a partition.
+
+    Here, next trial will be::
+
+        Training @: 2016-01-06 00:00:00 <--> 2016-02-03 00:10:00;
+        Testing  @: 2016-02-03 00:12:00 <--> 2016-02-08 00:13:00
+
+    Expanding time-window data iterating:
+
+    Differs from above in a way that trial interval start position is fixed at the beginning of dataset. Thus,
+    trial support interval is expanding to the right and every subsequent trial is `longer` than previous one
+    by amount of test interval.
+
+    Episodes sampling:
+
+    Episodes sampling is performed in such a way that entire episode duration lies within `Trial` interval.
+
+    Experimental:
+    Train episode start position within interval is drawn from beta-distribution with default parameters b_alpha=1,
+    b_beta=1, i.e. uniform one.
+
+    Beta-distribution makes skewed sampling possible , e.g.
+    to give recent episodes higher probability of being sampled, e.g.:  b_alpha=10, b_beta=0.8.
+
+    It can be set to anneal to uniform one in specified number of train episodes. Annealing is done by exponentially
+    decaying alpha and beta parameters to 1.
+
+    Test episodes are always sampled uniformly.
+
+    See description at `BTgymTrialRandomIterator()` for motivation.
     """
-    trial_params =dict(
+    trial_params = dict(
         # Trial-sampling params:
-        trial_range=dict(  # Trial time range in days, hours, minutes:
+        train_range=dict(  # Trial time range in days, hours, minutes:
             days=7,
             hours=0,
         ),
-        trial_stride=dict(
+        test_range=dict(  # Test time period in days, hours, minutes:
             days=7,
             hours=0,
         ),
-        samples_per_trial=0
+        train_samples=0,
+        test_samples=0,
+        test_period=100,
+        trial_start_00=True,
+        expanding=False,
+        b_alpha=1.0,
+        b_beta=1.0,
+        b_anneal_steps=-1
     )
 
     def __init__(self, **kwargs):
         """
         Args:
-            kwargs:         BTgymDataset specific kwargs.
-            trial_range:    dict. containing `Trial` support interval (time range) in: `days`[, `hours`][, `minutes`].
-            trial_stride:   dict. containing stride interval between `Trials` in: `days`[, `hours`][, `minutes`].
+            kwargs:             BTgymDataset specific kwargs.
+            train_range:        dict. containing `Trial` train interval in: `days`[, `hours`][, `minutes`];
+            test_range:         dict. containing `Trial` test interval in: `days`[, `hours`][, `minutes`];
+            train_samples:      number of episodes to draw from single `Trial train interval`;
+            test_samples:       number of episodes to draw from `Trial test interval` every `test period`;
+            test_period:        draw test episodes after every `test_period` train samples;
+            expanding:          bool, if True - use expanding-type Trials, sliding otherwise; def=False;
+            b_alpha:            sampling beta-distribution alpha param; def=1;
+            b_beta:             sampling beta-distribution beta param; def=1;
+            b_anneal_steps:     if set, anneals beta-distribution to uniform one in 'b_anneal_steps' number
+                                of train samples, numbering continuously for all `Trials`; def=-1 (disabled);
+            trial_start_00:     `Trial` start time will be set to that of first record of the day (usually 00:00);
+
 
         Note:
-            - Total number of `Trials` is inferred upon trial_params given and overall dataset size.
-
-            - Total number of episodes drawn from each `Trial` is defined when own .reset() method is called.
+            - Total number of `Trials` (cardinality) is inferred upon args given and overall dataset size.
         """
         self.params.update(self.trial_params)
         super(BTgymSequentialTrial, self).__init__(**kwargs)
 
         # Timedeltas:
-        self.trial_range_delta = datetime.timedelta(**self.trial_range)
-        self.trial_stride_delta = datetime.timedelta(**self.trial_stride)
+        self.train_range_delta = datetime.timedelta(**self.train_range)
+        self.test_range_delta = datetime.timedelta(**self.test_range)
 
-        self.trial_range_row = 0
-        self.trial_stride_row = 0
-        self.trial_mean_row = 0
+        self.train_range_row = 0
+        self.test_range_row = 0
+        self.train_mean_row = 0
+
+        self.test_range_row = 0
+        self.test_mean_row = 0
+
         self.global_step = 0
         self.total_steps = 0
         self.total_trials = 0
         self.trial_num = 0
-        self.sample_num = 0
+        self.train_sample_num = 0
+        self.test_sample_num = 0
+        self.total_samples = 0
+
+    @staticmethod
+    def lin_decay(step, param_0, max_steps):
+        """
+        Linear decay from param_0 to 1 in `max_steps`.
+        """
+        if max_steps > 0:
+            if step <= max_steps:
+                return ((1 - param_0) / max_steps) * step + param_0
+
+            else:
+                return 1.0
+
+        else:
+            return param_0
+
+    @staticmethod
+    def exp_decay(step, param_0, max_steps, gamma=3.5):
+        """
+        For given step <= max_steps returns exp-decayed value in [param_0, 1]; returns 1 if step > max_steps;
+        gamma - steepness control.
+        """
+        if max_steps > 0:
+            if step <= max_steps:
+                step = 2 - step / max_steps
+                return math.exp(step ** gamma - 2 ** gamma) * (param_0 - 1) + 1
+
+            else:
+                return 1.0
+
+        else:
+            return param_0
 
     def sample(self, **kwargs):
         """
-        Randomly uniformly samples from iterating sequence of `Trial` distributions.
+        Randomly samples from iterating sequence of `Trial` train/test distributions.
 
-        Iteratively calling this method results in::
+        Sampling loop::
 
-                    - randomly draws single episode from first [or specified by `reset()`] Trial;
-                - until predefined number of episodes has been drawn;
-                - advances to the next Trial in Trial_sequence;
-            - until Trial_sequence is exhausted or .reset();
+            - until Trial_sequence is exhausted or .reset():
+                - sample next Trial in Trial_sequence;
+                    - until predefined number of episodes has been drawn:
+                        - randomly draw single episode from current Trial TRAIN distribution;
+                        - if reached test_period train episodes:
+                            - until predefined number of episodes has been drawn:
+                                - draw single episode from current Trial TEST distribution;
 
         Args:
             kwargs:     not used.
 
         Returns:
-            BTgymDataset instance containing episode data and metadata.
+            `BTgymDataset` instance containing episode data [and metadata].
         """
         try:
             assert self.is_ready
@@ -623,13 +778,14 @@ class BTgymSequentialTrial(BTgymDataset):
         except AssertionError:
             return 'Data not ready. Call .reset() first.'
 
-        episode = self._trial_sample_sequential()
-        episode.metadata['type'] = 'sequential_trial_sample'
-        episode.metadata['trial_num'] = self.trial_num
-        episode.metadata['sample_num'] = self.sample_num
+        episode, trial_num, type, sample_num = self._trial_sample_sequential()
+        episode.metadata['type'] = type  # 0 - train, 1 - test
+        episode.metadata['trial_num'] = trial_num
+        episode.metadata['sample_num'] = sample_num
+        self.log.debug('Seq_Data_Iterator: sample is ready with metadata: {}'.format(episode.metadata))
         return episode
 
-    def reset(self, global_step=0, total_steps=10000000, skip_frame=10):
+    def reset(self, global_step=0, total_steps=None, skip_frame=10):
         """
         [Re]starts sampling iterator from specified position.
 
@@ -645,77 +801,198 @@ class BTgymSequentialTrial(BTgymDataset):
             self.read_csv()
 
         # Total gym-environment steps and step training starts with:
-        self.total_steps = total_steps
-        self.global_step = global_step
+        if total_steps is not None:
+            self.total_steps = total_steps
+            self.global_step = global_step
+            assert self.global_step < self.total_steps, 'Outer space jumps not supported. Got: global_step={} of {}.'.\
+                format(self.global_step, self.total_steps)
 
-        assert self.global_step < self.total_steps, 'Outer space jumps not supported. Got: global_step={} [of {}].'.\
-            format(self.global_step, self.total_steps)
+        else:
+            self.global_step = 0
+            self.total_steps = -1
+
+        # Trial train support interval in number of records:
+        self.train_range_row = int( self.train_range_delta.total_seconds() / (self.timeframe * 60))
+
+        # Trial test support interval in number of records:
+        self.test_range_row = int( self.test_range_delta.total_seconds() / (self.timeframe * 60))
 
         # Infer cardinality of distribution over Trials:
-        self.total_trials = int((self.data_range_delta - self.trial_range_delta) / self.trial_stride_delta)
+
+        self.total_trials = int(
+            (self.data.shape[0] - self.train_range_row) / self.test_range_row
+        )
 
         assert self.total_trials > 0, 'Trial`s cardinality below 1. Hint: check data parameters consistency.'
 
-        # Number of samples to draw from each Trial distribution:
-        self.samples_per_trial = int(self.total_steps / (self.total_trials * self.episode_num_records / skip_frame))
+        # Infer number of train samples to draw from each Trial distribution:
+        if self.total_steps > 0:
+            self.train_samples = int(self.total_steps / (self.total_trials * self.episode_num_records / skip_frame))
 
-        assert self.samples_per_trial > 0, 'Number of samples per trial below 1. Hint: check parameters consistency.'
+        else:
+            self.log.warning('`reset_data()` got total_steps=None -> train_samples={}, iterating from 0'.
+                             format(self.train_samples))
+
+        assert self.train_samples > 0, 'Number of train samples per trial below 1. Hint: check parameters consistency.'
+        assert self.test_samples >= 0, 'Size of test samples batch below 0. Hint: check parameters consistency.'
+
+        assert self.b_alpha > 0 and self.b_beta > 0, 'Expected positive B-distribution alpha, beta; got: {}'.\
+            format([self.b_alpha, self.b_beta])
+
         # Current trial to start with:
         self.trial_num = int(self.total_trials * self.global_step / self.total_steps)
 
-        # Trial support interval in number of records:
-        self.trial_range_row = int(self.data.shape[0] * (self.trial_range_delta / self.data_range_delta))
+        # Number of train samples sampled so far (fror B-distr. annealing):
+        self.total_samples = self.trial_num * self.train_samples
 
-        # Sequential step size:
-        self.trial_stride_row = int(self.data.shape[0] * (self.trial_stride_delta / self.data_range_delta))
+        #print('self.train_range_delta:', self.train_range_delta.total_seconds())
+        #print('self.train_range_row:', self.train_range_row)
+        #print('self.test_range_delta:', self.test_range_delta)
 
-        self.sample_num = 0
-        #self.sample_rnd_num = 0
+        self.train_sample_num = 0
+        self.test_sample_num = 0
 
-        # Mean of first Trial:
-        self.trial_mean_row = int(self.trial_range_row / 2) + self.trial_stride_row * self.trial_num
+        # Mean of first train-Trial:
+        self.train_mean_row = int(self.train_range_row / 2) + self.test_range_row * self.trial_num
+        #print('self.train_mean_row:', self.train_mean_row)
+
+        # If trial_start_00 option set, get index of first record of that day:
+        if self.trial_start_00:
+            train_first_row = self.train_mean_row - int(self.train_range_row / 2) + 1
+            train_first_day = self.data[train_first_row:train_first_row + 1].index[0]
+            self.train_mean_row = self.data.index.get_loc(train_first_day.date(), method='nearest') + \
+                                  int(self.train_range_row / 2)
+            self.log.warning('Trial train start time adjusted to <00:00>')
+
+        # Mean of first test-Trial:
+        self.test_mean_row = self.train_mean_row + int((self.train_range_row + self.test_range_row) / 2) + 1
+        #print('self.test_mean_row:', self.test_mean_row)
+
+        if self.expanding:
+            start_time = self.data.index[0]
+            start_row = 0
+            t_type='EXPANDING'
+
+        else:
+            start_time = self.data.index[self.train_mean_row - int(self.train_range_row / 2)]
+            start_row = self.train_mean_row - int(self.train_range_row / 2)
+            t_type = 'SLIDING'
 
         self.log.warning(
-            '\nTrial interval: {}; stride: {}.\nTrials cardinality: {}; iterating from: {}.\nEpisodes per trial: {}.\n'.
-            format(
-                self.trial_range_delta,
-                self.trial_stride_delta,
+            (
+                '\nTrial type: {}; [initial] train interval: {}; test interval: {}.' +
+                '\nCardinality: {}; iterating from: {}.' +
+                '\nTrain episodes per trial: {}, sampling from beta-distribution[a:{}, b:{}] on train interval.'+
+                '\nSampling {} test episodes after every {} train ones.'
+            ).format(
+                t_type,
+                self.train_range_delta,
+                self.test_range_delta,
                 self.total_trials,
                 self.trial_num,
-                self.samples_per_trial
+                self.train_samples,
+                self.b_alpha,
+                self.b_beta,
+                self.test_samples,
+                self.test_period,
+
             )
         )
+        if self.b_anneal_steps > 0:
+            self.log.warning('\nAnnealing beta-distribution to uniform one in {} train samples.'.format(self.b_anneal_steps))
         self.log.warning(
-            'Trial #{} @ interval: {} <--> {}'.
+            '\nTrial #{}:\nTraining @: {} <--> {};\nTesting  @: {} <--> {}'.
             format(
                 self.trial_num,
-                self.data.index[self.trial_mean_row - int(self.trial_range_row / 2)],
-                self.data.index[self.trial_mean_row + int(self.trial_range_row / 2)]
+                start_time,
+                self.data.index[self.train_mean_row + int(self.train_range_row / 2)],
+                self.data.index[self.test_mean_row - int(self.test_range_row / 2)],
+                self.data.index[self.test_mean_row + int(self.test_range_row / 2)],
+            )
+        )
+        self.log.debug(
+            'Trial #{} rows: training @: {} <--> {}; testing @: {} <--> {}'.
+            format(
+                self.trial_num,
+                start_row,
+                self.train_mean_row + int(self.train_range_row / 2),
+                self.test_mean_row - int(self.test_range_row / 2),
+                self.test_mean_row + int(self.test_range_row / 2),
             )
         )
         self.is_ready = True
 
     def _trial_sample_sequential(self):
-        if self.sample_num >= self.samples_per_trial:
-            self.trial_num += 1
-            self.sample_num = 0
-            self.trial_mean_row += self.trial_stride_row
 
-            assert self.trial_num <= self.total_trials, 'Trial`s sequence exhausted.'
-            # Todo: self.ready = False
+        # Is it time to run tests?
+        if self.train_sample_num != 0 and self.train_sample_num % self.test_period == 0:
+            # Until not done with testing:
+            if self.test_sample_num < self.test_samples:
+                self.test_sample_num += 1
+                self.log.debug('Test sample #{}'.format(self.test_sample_num))
+                # Uniformly sample tests:
+                return self._sample_interval(
+                    interval=[
+                        self.test_mean_row - int(self.test_range_row / 2),
+                        self.test_mean_row + int(self.test_range_row / 2)
+                    ],
+                    b_alpha=1,
+                    b_beta=1
+                ), self.trial_num, True, self.test_sample_num
+
+            else:
+                self.test_sample_num = 0
+
+        # Have we done with training on current Trial?
+        if self.train_sample_num >= self.train_samples:
+            self.trial_num += 1
+            self.train_sample_num = 0
+            self.train_mean_row += self.test_range_row
+            assert self.trial_num <= self.total_trials, 'Trial`s sequence exhausted.'  # Todo: self.ready = False
+
+            # If trial_start_00 option set, get index of first record of that day:
+            if self.trial_start_00:
+                train_first_row = self.train_mean_row - int(self.train_range_row / 2) + 1
+                train_first_day = self.data[train_first_row:train_first_row + 1].index[0]
+                self.train_mean_row = self.data.index.get_loc(train_first_day.date(), method='nearest') + \
+                                      int(self.train_range_row / 2)
+                self.log.debug('Trial train start time adjusted to <00:00> :{}'.format(self.train_mean_row))
+            self.test_mean_row = self.train_mean_row + int((self.train_range_row + self.test_range_row) / 2) + 1
+
+            if self.expanding:
+                start_time = self.data.index[0]
+
+            else:
+                start_time = self.data.index[self.train_mean_row - int(self.train_range_row / 2)]
 
             self.log.warning(
-                'Trial #{}: from {} to {}'.
+                'Trial #{}:\nTraining @: {} <--> {};\nTesting  @: {} <--> {}'.
                 format(
                     self.trial_num,
-                    self.data.index[self.trial_mean_row - int(self.trial_range_row / 2)],
-                    self.data.index[self.trial_mean_row + int(self.trial_range_row / 2)]
+                    start_time,
+                    self.data.index[self.train_mean_row + int(self.train_range_row / 2)],
+                    self.data.index[self.test_mean_row - int(self.test_range_row / 2)],
+                    self.data.index[self.test_mean_row + int(self.test_range_row / 2)],
                 )
             )
-        self.sample_num += 1
-        self.log.debug('Trial sample #{}'.format(self.sample_num))
 
-        return self._sample_position(position=self.trial_mean_row, tolerance=int(self.trial_range_row / 2))
+        self.train_sample_num += 1
+        self.total_samples += 1
+        self.log.debug('Train sample #{}'.format(self.train_sample_num))
+
+        if self.expanding:
+            interval = [0, self.train_mean_row + int(self.train_range_row / 2)]
+
+        else:
+            interval = [
+                self.train_mean_row - int(self.train_range_row / 2),
+                self.train_mean_row + int(self.train_range_row / 2)
+            ]
+        return self._sample_interval(
+            interval=interval,
+            b_alpha=self.exp_decay(self.total_samples, self.b_alpha, self.b_anneal_steps),
+            b_beta=self.exp_decay(self.total_samples, self.b_beta, self.b_anneal_steps),
+        ), self.trial_num, False, self.train_sample_num
 
 
 class BTgymRandomTrial(BTgymSequentialTrial):
@@ -777,7 +1054,7 @@ class BTgymRandomTrial(BTgymSequentialTrial):
             self.read_csv()
 
         # Infer cardinality of distribution over Trials:
-        self.total_trials = int((self.data_range_delta - self.trial_range_delta) / self.trial_stride_delta)
+        self.total_trials = int((self.data_range_delta - self.train_range_delta) / self.test_range_delta)
 
         assert self.total_trials > 0, 'Trial`s cardinality below 1. Hint: check data parameters consistency.'
 
@@ -785,10 +1062,10 @@ class BTgymRandomTrial(BTgymSequentialTrial):
         self.trial_num = 0
 
         # Trial support interval in number of records:
-        self.trial_range_row = int(self.data.shape[0] * (self.trial_range_delta / self.data_range_delta))
+        self.trial_range_row = int(self.data.shape[0] * (self.train_range_delta / self.data_range_delta))
 
         # Sequential step size:
-        self.trial_stride_row = int(self.data.shape[0] * (self.trial_stride_delta / self.data_range_delta))
+        self.trial_stride_row = int(self.data.shape[0] * (self.test_range_delta / self.data_range_delta))
 
         self.sample_num = 0
 
@@ -799,10 +1076,10 @@ class BTgymRandomTrial(BTgymSequentialTrial):
         self.log.warning(
             '\nTrial support interval: {}; mean stride: {}\nTrials cardinality: {}\nEpisodes per trial: {}.\n'.
                 format(
-                self.trial_range_delta,
-                self.trial_stride_delta,
+                self.train_range_delta,
+                self.test_range_delta,
                 self.total_trials,
-                self.samples_per_trial
+                self.train_samples
             )
         )
         self.log.warning(
@@ -843,13 +1120,13 @@ class BTgymRandomTrial(BTgymSequentialTrial):
         episode = self._trial_sample_random()
 
         # Metadata:
-        episode.metadata['type'] = 'random_trial_sample'
+        episode.metadata['type'] = False # Always `train`
         episode.metadata['trial_num'] = self.trial_num
         episode.metadata['sample_num'] = self.sample_num
         return episode
 
     def _trial_sample_random(self):
-        if self.sample_num >= self.samples_per_trial:
+        if self.sample_num >= self.train_samples:
             self.trial_num += 1
             self.sample_num = 0
             self.trial_mean_row = int(self.trial_range_row / 2) +\
@@ -866,7 +1143,13 @@ class BTgymRandomTrial(BTgymSequentialTrial):
         self.sample_num += 1
         self.log.debug('Trial sample #{}'.format(self.sample_num))
 
-        return self._sample_position(position=self.trial_mean_row, tolerance=int(self.trial_range_row / 2))
+        return self._sample_interval(
+            interval=[
+                self.trial_mean_row - int(self.trial_range_row / 2),
+                self.trial_mean_row + int(self.trial_range_row / 2)
+            ]
+
+        )
 
 
 class ExtraPandasDirectData(btfeeds.PandasDirectData):
