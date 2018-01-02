@@ -59,8 +59,8 @@ env_config = dict(
         render_size_human=(9, 4),
         render_size_state=(11, 4),
         render_dpi=75,
-        port=6430,
-        data_port=6739,
+        port=6433,
+        data_port=6769,
         connect_timeout=60,
         verbose=0,  # better be 0
     )
@@ -68,7 +68,7 @@ env_config = dict(
 
 cluster_config = dict(
     host='127.0.0.1',
-    port=12446,
+    port=12448,
     num_workers= 4,  # Set according CPU's available
     num_ps=1,
     num_envs=1,  # do not change yet
